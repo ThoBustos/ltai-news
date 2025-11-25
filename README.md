@@ -107,5 +107,3 @@ ltai-news/
   ops/
     env.example             # example env vars
     postman_collection.json # (optional) API testing
-
-    will update
