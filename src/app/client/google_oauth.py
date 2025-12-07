@@ -219,7 +219,7 @@ class GoogleOAuthClient:
             raise RuntimeError("Not authenticated. Call authenticate() first.")
 
         logger.debug(f"Getting recent videos for channel {channel_id} (last {hours} hours)")
-        from datetime import datetime, timedelta
+        from datetime import datetime, timezone, timedelta
 
         # Get uploads playlist
         channel_request = self.youtube_service.channels().list(
@@ -235,29 +235,56 @@ class GoogleOAuthClient:
             "relatedPlaylists"
         ]["uploads"]
 
-        # Get videos
-        published_after = datetime.utcnow() - timedelta(hours=hours)
+        # Calculate cutoff time (use timezone-aware datetime)
+        published_after = datetime.now(timezone.utc) - timedelta(hours=hours)
         videos = []
+        next_page_token = None
 
-        request = self.youtube_service.playlistItems().list(
-            part="snippet",
-            playlistId=uploads_playlist_id,
-            maxResults=50,
-        )
-        response = request.execute()
+        # Paginate through all videos until we find ones older than lookback period
+        while True:
+            request_params = {
+                "part": "snippet",
+                "playlistId": uploads_playlist_id,
+                "maxResults": 50,
+            }
+            if next_page_token:
+                request_params["pageToken"] = next_page_token
 
-        for item in response.get("items", []):
-            published_at = datetime.fromisoformat(
-                item["snippet"]["publishedAt"].replace("Z", "+00:00")
-            )
-            if published_at.replace(tzinfo=None) >= published_after:
-                videos.append(
-                    {
-                        "id": item["snippet"]["resourceId"]["videoId"],
-                        "title": item["snippet"]["title"],
-                        "published_at": item["snippet"]["publishedAt"],
-                    }
+            request = self.youtube_service.playlistItems().list(**request_params)
+            response = request.execute()
+
+            # Process videos from this page
+            found_old_video = False
+            for item in response.get("items", []):
+                # Parse published_at with timezone
+                published_at_str = item["snippet"].get("publishedAt")
+                if not published_at_str:
+                    logger.warning("Video missing publishedAt, skipping")
+                    continue
+                published_at = datetime.fromisoformat(
+                    published_at_str.replace("Z", "+00:00")
                 )
+
+                # Compare timezone-aware datetimes
+                if published_at >= published_after:
+                    videos.append(
+                        {
+                            "id": item["snippet"]["resourceId"]["videoId"],
+                            "title": item["snippet"]["title"],
+                            "published_at": published_at_str,
+                        }
+                    )
+                else:
+                    # Since videos are returned newest-first, if we find one older,
+                    # all subsequent videos will also be older - stop processing
+                    found_old_video = True
+                    break
+
+            # If we found an old video or no more pages, stop
+            if found_old_video or not response.get("nextPageToken"):
+                break
+
+            next_page_token = response.get("nextPageToken")
 
         logger.info(f"Found {len(videos)} recent videos for channel {channel_id}")
         return videos

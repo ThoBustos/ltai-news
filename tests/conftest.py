@@ -44,3 +44,12 @@ def log_test_info(request):
         logger.debug(f"Running test: {request.node.name}")
     yield
 
+
+@pytest.fixture
+def mock_settings_env(monkeypatch):
+    """Set up mock environment variables for settings."""
+    monkeypatch.setenv("GOOGLE_CREDENTIALS_JSON_PATH", "/fake/path/creds.json")
+    monkeypatch.setenv("TRACKED_CHANNELS", "Test Channel 1,Test Channel 2")
+    monkeypatch.setenv("CONTENT_LOOKBACK_HOURS", "24")
+    monkeypatch.setenv("GOOGLE_TOKEN_FILE", "/fake/path/token.json")
+
