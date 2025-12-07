@@ -1,0 +1,2 @@
+"""LTAI News application package."""
+
