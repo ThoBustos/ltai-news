@@ -1,0 +1,23 @@
+{
+  "include": [
+    "src"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    ".venv",
+    "venv",
+    "node_modules",
+    ".pytest_cache"
+  ],
+  "extraPaths": [
+    "${workspaceFolder}/src"
+  ],
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": true,
+  "reportMissingTypeStubs": false,
+  "venvPath": "${workspaceFolder}",
+  "venv": ".venv"
+}
+
+
