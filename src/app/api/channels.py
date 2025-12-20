@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, HTTPException
 
-from app.config.settings import get_settings
+from app.config.settings import settings
 from app.core.logging import logger
 from app.models.channel import ChannelTrackerResult
 from app.services.channel_tracker import ChannelTracker
@@ -18,7 +18,6 @@ async def list_tracked_channels():
     Returns:
         List of channel names/handles from configuration
     """
-    settings = get_settings()
     return {
         "channels": settings.tracked_channels,
         "lookback_hours": settings.content_lookback_hours,

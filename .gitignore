@@ -29,6 +29,8 @@ ENV/
 # Environment variables
 .env
 .env.local
+.env.*
+!.env.example
 
 # OAuth tokens (never commit)
 .tokens/

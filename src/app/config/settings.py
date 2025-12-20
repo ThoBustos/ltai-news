@@ -1,7 +1,6 @@
 """Application settings and configuration."""
 
 import os
-from functools import lru_cache
 from typing import List, Optional
 
 from pydantic import BaseModel, Field, computed_field
@@ -32,12 +31,61 @@ class Settings(BaseSettings):
         alias="CONTENT_LOOKBACK_HOURS",
     )
 
+    # Supabase Configuration
+    supabase_url: str = Field(..., alias="SUPABASE_PROJECT_URL")
+    supabase_key: str = Field(..., alias="SUPABASE_API_KEY")
+
     # YouTube API Configuration
     google_credentials_json_path: str = Field(
         ..., alias="GOOGLE_CREDENTIALS_JSON_PATH"
     )
     google_token_file: str = Field(
         default=".tokens/token.json", alias="GOOGLE_TOKEN_FILE"
+    )
+
+    # Orchestrator Configuration
+    processing_batch_size: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Number of videos to process in a single batch",
+        alias="PROCESSING_BATCH_SIZE",
+    )
+    max_retry_attempts: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Maximum number of retry attempts for failed operations",
+        alias="MAX_RETRY_ATTEMPTS",
+    )
+    processing_timeout_minutes: int = Field(
+        default=30,
+        ge=5,
+        le=180,
+        description="Timeout for processing operations in minutes",
+        alias="PROCESSING_TIMEOUT_MINUTES",
+    )
+    default_pipeline_date: Optional[str] = Field(
+        default=None,
+        description="Default date for testing pipeline (YYYY-MM-DD format)",
+        alias="DEFAULT_PIPELINE_DATE",
+    )
+
+    # Transcript Service Configuration
+    transcript_io_api_key: Optional[str] = Field(
+        default=None,
+        description="API key for transcript.io service (with 'Basic ' prefix)",
+        alias="TRANSCRIPT_IO_API_KEY",
+    )
+    transcript_io_base_url: str = Field(
+        default="https://api.youtube-transcript.io/v1",
+        description="Base URL for transcript.io API",
+        alias="TRANSCRIPT_IO_BASE_URL",
+    )
+    transcript_language_code: str = Field(
+        default="en",
+        description="Default language code for transcript extraction",
+        alias="TRANSCRIPT_LANGUAGE_CODE",
     )
 
     model_config = SettingsConfigDict(
@@ -73,8 +121,5 @@ class Settings(BaseSettings):
         return []
 
 
-@lru_cache()
-def get_settings() -> Settings:
-    """Get cached settings instance."""
-    return Settings()
+settings = Settings()
 

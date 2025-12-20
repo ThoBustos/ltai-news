@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from app.core.logging import logger
 from app.core.utils.time_window import parse_date
-from app.models.pipeline import PipelineResult, PipelineStatus
+from app.models.pipeline import PipelineResult, PipelineStatus, TranscriptExtractionResult
 from app.services.orchestrator import ContentOrchestrator
 
 router = APIRouter(prefix="/api/orchestrator", tags=["orchestrator"])
@@ -39,6 +39,15 @@ class BackfillResponse(BaseModel):
     successful_runs: int
     failed_runs: int
     results: List[PipelineResult]
+
+
+class TranscriptExtractionResponse(BaseModel):
+    """Response for transcript extraction requests."""
+    
+    message: str
+    target_date: str
+    status: str
+    result: TranscriptExtractionResult
 
 
 @router.post("/run-daily/{date_str}", response_model=PipelineRunResponse)
@@ -256,6 +265,93 @@ async def run_backfill_async(backfill_request: BackfillRequest, background_tasks
     except Exception as e:
         logger.error(f"Failed to start background backfill: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to start backfill: {str(e)}")
+
+
+@router.post("/extract-transcripts/{date_str}", response_model=TranscriptExtractionResponse)
+async def extract_transcripts(date_str: str) -> TranscriptExtractionResponse:
+    """
+    Extract transcripts for all videos on a specific date.
+    
+    This endpoint triggers standalone transcript extraction:
+    1. Finds videos published on the target date
+    2. Extracts transcripts for videos that don't have them yet
+    3. Saves transcripts to the database
+    4. Updates video flags to prevent re-processing
+    
+    Args:
+        date_str: Date in YYYY-MM-DD format
+        
+    Returns:
+        TranscriptExtractionResponse with extraction results
+    """
+    logger.info(f"API request to extract transcripts for {date_str}")
+    
+    try:
+        # Parse date
+        target_date = parse_date(date_str)
+        
+        # Initialize orchestrator
+        orchestrator = ContentOrchestrator()
+        
+        # Extract transcripts
+        result = await orchestrator.extract_transcripts(target_date)
+        
+        return TranscriptExtractionResponse(
+            message=f"Transcript extraction completed for {date_str}",
+            target_date=date_str,
+            status="completed" if result.transcripts_extracted > 0 or result.videos_attempted == 0 else "partial",
+            result=result
+        )
+        
+    except ValueError as e:
+        logger.error(f"Invalid date format: {date_str}: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
+    except Exception as e:
+        logger.error(f"Transcript extraction failed for {date_str}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Transcript extraction failed: {str(e)}")
+
+
+@router.post("/extract-transcripts/{date_str}/async")
+async def extract_transcripts_async(date_str: str, background_tasks: BackgroundTasks):
+    """
+    Extract transcripts asynchronously in the background.
+    
+    Args:
+        date_str: Date in YYYY-MM-DD format
+        background_tasks: FastAPI background tasks
+        
+    Returns:
+        Immediate response while transcript extraction runs in background
+    """
+    logger.info(f"API request to extract transcripts async for {date_str}")
+    
+    try:
+        # Parse date to validate format
+        target_date = parse_date(date_str)
+        
+        # Add transcript extraction task to background
+        async def run_transcript_extraction():
+            orchestrator = ContentOrchestrator()
+            result = await orchestrator.extract_transcripts(target_date)
+            logger.info(f"Background transcript extraction completed for {date_str}: "
+                       f"{result.transcripts_extracted}/{result.videos_attempted} successful "
+                       f"({result.success_rate:.1f}% success rate)")
+        
+        background_tasks.add_task(run_transcript_extraction)
+        
+        return {
+            "message": f"Transcript extraction started in background for {date_str}",
+            "target_date": date_str,
+            "status": "started",
+            "note": "Check logs for completion status"
+        }
+        
+    except ValueError as e:
+        logger.error(f"Invalid date format: {date_str}: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
+    except Exception as e:
+        logger.error(f"Failed to start background transcript extraction for {date_str}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to start transcript extraction: {str(e)}")
 
 
 @router.get("/health")
