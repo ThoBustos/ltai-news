@@ -1,0 +1,273 @@
+"""API endpoints for orchestrator control."""
+
+from datetime import date
+from typing import List
+
+from fastapi import APIRouter, HTTPException, BackgroundTasks
+from pydantic import BaseModel
+
+from app.core.logging import logger
+from app.core.utils.time_window import parse_date
+from app.models.pipeline import PipelineResult, PipelineStatus
+from app.services.orchestrator import ContentOrchestrator
+
+router = APIRouter(prefix="/api/orchestrator", tags=["orchestrator"])
+
+
+class PipelineRunResponse(BaseModel):
+    """Response for pipeline run requests."""
+    
+    message: str
+    target_date: str
+    status: str
+    result: PipelineResult
+
+
+class BackfillRequest(BaseModel):
+    """Request for backfill operations."""
+    
+    start_date: str  # YYYY-MM-DD format
+    end_date: str    # YYYY-MM-DD format
+
+
+class BackfillResponse(BaseModel):
+    """Response for backfill requests."""
+    
+    message: str
+    date_range: str
+    total_runs: int
+    successful_runs: int
+    failed_runs: int
+    results: List[PipelineResult]
+
+
+@router.post("/run-daily/{date_str}", response_model=PipelineRunResponse)
+async def run_daily_pipeline(date_str: str) -> PipelineRunResponse:
+    """
+    Run the complete daily pipeline for a specific date.
+    
+    This endpoint triggers:
+    1. Content extraction for the specified date
+    2. Video processing (placeholder for now)
+    3. Digest generation (placeholder for now)
+    
+    Args:
+        date_str: Date in YYYY-MM-DD format
+        
+    Returns:
+        PipelineRunResponse with execution results
+    """
+    logger.info(f"API request to run daily pipeline for {date_str}")
+    
+    try:
+        # Parse date
+        target_date = parse_date(date_str)
+        
+        # Initialize orchestrator
+        orchestrator = ContentOrchestrator()
+        
+        # Run pipeline
+        result = await orchestrator.run_daily_pipeline(target_date)
+        
+        return PipelineRunResponse(
+            message=f"Pipeline completed for {date_str}",
+            target_date=date_str,
+            status="completed" if result.success else "failed",
+            result=result
+        )
+        
+    except ValueError as e:
+        logger.error(f"Invalid date format: {date_str}: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
+    except Exception as e:
+        logger.error(f"Pipeline execution failed for {date_str}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Pipeline execution failed: {str(e)}")
+
+
+@router.post("/run-daily/{date_str}/async")
+async def run_daily_pipeline_async(date_str: str, background_tasks: BackgroundTasks):
+    """
+    Run the daily pipeline asynchronously in the background.
+    
+    Args:
+        date_str: Date in YYYY-MM-DD format
+        background_tasks: FastAPI background tasks
+        
+    Returns:
+        Immediate response while pipeline runs in background
+    """
+    logger.info(f"API request to run daily pipeline async for {date_str}")
+    
+    try:
+        # Parse date to validate format
+        target_date = parse_date(date_str)
+        
+        # Add pipeline task to background
+        async def run_pipeline():
+            orchestrator = ContentOrchestrator()
+            result = await orchestrator.run_daily_pipeline(target_date)
+            if result.success:
+                logger.info(f"Background pipeline completed successfully for {date_str}")
+            else:
+                logger.error(f"Background pipeline failed for {date_str}: {result.total_errors}")
+        
+        background_tasks.add_task(run_pipeline)
+        
+        return {
+            "message": f"Pipeline started in background for {date_str}",
+            "target_date": date_str,
+            "status": "started",
+            "note": "Check /api/orchestrator/status/{date} for progress"
+        }
+        
+    except ValueError as e:
+        logger.error(f"Invalid date format: {date_str}: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
+    except Exception as e:
+        logger.error(f"Failed to start background pipeline for {date_str}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to start pipeline: {str(e)}")
+
+
+@router.get("/status/{date_str}", response_model=PipelineStatus)
+async def get_pipeline_status(date_str: str) -> PipelineStatus:
+    """
+    Get the current status of pipeline for a specific date.
+    
+    Args:
+        date_str: Date in YYYY-MM-DD format
+        
+    Returns:
+        PipelineStatus with current state
+    """
+    logger.debug(f"API request for pipeline status for {date_str}")
+    
+    try:
+        # Parse date
+        target_date = parse_date(date_str)
+        
+        # Initialize orchestrator
+        orchestrator = ContentOrchestrator()
+        
+        # Get status
+        status = orchestrator.get_pipeline_status(target_date)
+        
+        return status
+        
+    except ValueError as e:
+        logger.error(f"Invalid date format: {date_str}: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
+    except Exception as e:
+        logger.error(f"Failed to get pipeline status for {date_str}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Status check failed: {str(e)}")
+
+
+@router.post("/backfill", response_model=BackfillResponse)
+async def run_backfill(backfill_request: BackfillRequest) -> BackfillResponse:
+    """
+    Run pipeline for a range of dates (backfill operation).
+    
+    Args:
+        backfill_request: Request with start_date and end_date
+        
+    Returns:
+        BackfillResponse with results for all dates
+    """
+    logger.info(f"API request for backfill: {backfill_request.start_date} to {backfill_request.end_date}")
+    
+    try:
+        # Parse dates
+        start_date = parse_date(backfill_request.start_date)
+        end_date = parse_date(backfill_request.end_date)
+        
+        if start_date > end_date:
+            raise ValueError("start_date must be before or equal to end_date")
+        
+        # Initialize orchestrator
+        orchestrator = ContentOrchestrator()
+        
+        # Run backfill
+        results = await orchestrator.run_backfill(start_date, end_date)
+        
+        # Count successes and failures
+        successful_runs = len([r for r in results if r.success])
+        failed_runs = len(results) - successful_runs
+        
+        return BackfillResponse(
+            message=f"Backfill completed for {backfill_request.start_date} to {backfill_request.end_date}",
+            date_range=f"{backfill_request.start_date} to {backfill_request.end_date}",
+            total_runs=len(results),
+            successful_runs=successful_runs,
+            failed_runs=failed_runs,
+            results=results
+        )
+        
+    except ValueError as e:
+        logger.error(f"Invalid backfill request: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Backfill execution failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Backfill execution failed: {str(e)}")
+
+
+@router.post("/backfill/async")
+async def run_backfill_async(backfill_request: BackfillRequest, background_tasks: BackgroundTasks):
+    """
+    Run backfill operation asynchronously in the background.
+    
+    Args:
+        backfill_request: Request with start_date and end_date
+        background_tasks: FastAPI background tasks
+        
+    Returns:
+        Immediate response while backfill runs in background
+    """
+    logger.info(f"API request for async backfill: {backfill_request.start_date} to {backfill_request.end_date}")
+    
+    try:
+        # Parse dates to validate format
+        start_date = parse_date(backfill_request.start_date)
+        end_date = parse_date(backfill_request.end_date)
+        
+        if start_date > end_date:
+            raise ValueError("start_date must be before or equal to end_date")
+        
+        # Add backfill task to background
+        async def run_backfill_task():
+            orchestrator = ContentOrchestrator()
+            results = await orchestrator.run_backfill(start_date, end_date)
+            successful_runs = len([r for r in results if r.success])
+            logger.info(
+                f"Background backfill completed: {successful_runs}/{len(results)} successful "
+                f"for {backfill_request.start_date} to {backfill_request.end_date}"
+            )
+        
+        background_tasks.add_task(run_backfill_task)
+        
+        return {
+            "message": f"Backfill started in background for {backfill_request.start_date} to {backfill_request.end_date}",
+            "date_range": f"{backfill_request.start_date} to {backfill_request.end_date}",
+            "status": "started",
+            "note": "Backfill is running in background. Check logs for completion status."
+        }
+        
+    except ValueError as e:
+        logger.error(f"Invalid backfill request: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to start background backfill: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to start backfill: {str(e)}")
+
+
+@router.get("/health")
+async def health_check():
+    """
+    Health check endpoint for orchestrator service.
+    
+    Returns:
+        Simple health status
+    """
+    return {
+        "status": "healthy",
+        "service": "orchestrator",
+        "message": "Orchestrator service is operational"
+    }
