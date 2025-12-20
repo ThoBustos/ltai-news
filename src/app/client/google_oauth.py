@@ -10,6 +10,8 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 
 from app.core.logging import logger
+from app.core.utils.duration import parse_duration_to_seconds
+from app.config.settings import settings
 
 # YouTube API scope
 SCOPES = ["https://www.googleapis.com/auth/youtube.readonly"]
@@ -192,6 +194,8 @@ class GoogleOAuthClient:
             snippet = video.get("snippet", {})
             statistics = video.get("statistics", {})
             content_details = video.get("contentDetails", {})
+            duration_str = content_details.get("duration")
+            duration_seconds = parse_duration_to_seconds(duration_str)
 
             metadata = {
                 "id": video["id"],
@@ -201,7 +205,8 @@ class GoogleOAuthClient:
                 "thumbnail": snippet.get("thumbnails", {}).get("high", {}).get("url"),
                 "channel_id": snippet.get("channelId"),
                 "channel_title": snippet.get("channelTitle"),
-                "duration": content_details.get("duration"),
+                "duration": duration_str,
+                "duration_seconds": duration_seconds,
                 "view_count": int(statistics.get("viewCount", 0)),
                 "like_count": int(statistics.get("likeCount", 0)),
                 "comment_count": int(statistics.get("commentCount", 0)),

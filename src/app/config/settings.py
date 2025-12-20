@@ -30,6 +30,12 @@ class Settings(BaseSettings):
         description="Number of hours to look back for content (1-168 hours)",
         alias="CONTENT_LOOKBACK_HOURS",
     )
+    min_video_duration_minutes: int = Field(
+        default=4,
+        ge=0,
+        description="Minimum video duration in minutes to be collected",
+        alias="MIN_VIDEO_DURATION_MINUTES",
+    )
 
     # Supabase Configuration
     supabase_url: str = Field(..., alias="SUPABASE_PROJECT_URL")

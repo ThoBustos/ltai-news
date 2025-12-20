@@ -34,6 +34,7 @@ class Video(BaseModel):
     like_count: Optional[int] = None
     comment_count: Optional[int] = None
     duration: Optional[str] = Field(None, description="ISO 8601 duration (e.g., PT10M30S)")
+    duration_seconds: Optional[int] = Field(None, description="Duration in seconds")
 
     # Media URLs
     thumbnail_url: Optional[str] = None
@@ -62,6 +63,7 @@ class Video(BaseModel):
 
     # Optional: Processing metadata (filled later by processing service)
     transcript_fetched: bool = Field(False, description="Whether transcript has been fetched")
+    transcript_error: Optional[str] = Field(None, description="Error message if transcript extraction failed")
     summary_generated: bool = Field(False, description="Whether summary has been generated")
     tags_extracted: bool = Field(False, description="Whether tags have been extracted")
 

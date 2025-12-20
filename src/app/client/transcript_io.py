@@ -26,7 +26,7 @@ class TranscriptApiError(TranscriptIoError):
 class TranscriptIoClient:
     """Client for interacting with transcript.io API."""
     
-    def __init__(self, api_key: str, base_url: str = "https://api.youtube-transcript.io/v1"):
+    def __init__(self, api_key: str, base_url: str = "https://www.youtube-transcript.io/api/transcripts"):
         """Initialize client with API credentials.
         
         Args:

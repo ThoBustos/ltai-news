@@ -134,7 +134,18 @@ class ChannelTracker:
 
         # Convert to Video objects
         videos = []
+        min_duration_secs = self.settings.min_video_duration_minutes * 60
+        
         for video_data in videos_data:
+            # Skip if video is too short (e.g. Shorts)
+            duration_secs = video_data.get("duration_seconds", 0)
+            if duration_secs < min_duration_secs:
+                logger.info(
+                    f"Skipping video {video_data['id']} - duration {duration_secs}s "
+                    f"is less than minimum {min_duration_secs}s"
+                )
+                continue
+                
             video = Video(
                 id=video_data["id"],
                 channel_id=video_data["channel_id"],
@@ -145,6 +156,7 @@ class ChannelTracker:
                 like_count=video_data.get("like_count"),
                 comment_count=video_data.get("comment_count"),
                 duration=video_data.get("duration"),
+                duration_seconds=video_data.get("duration_seconds"),
                 thumbnail_url=video_data.get("thumbnail"),
                 url=video_data["url"],
                 status=VideoProcessingStatus.COLLECTED,
@@ -495,9 +507,20 @@ class ChannelTracker:
 
         # Filter videos to only include those in our exact window
         videos = []
+        min_duration_secs = self.settings.min_video_duration_minutes * 60
+        
         for video_data in videos_data:
             published_at = self._parse_datetime(video_data["published_at"])
             if published_at and window.contains(published_at):
+                # Skip if video is too short
+                duration_secs = video_data.get("duration_seconds", 0)
+                if duration_secs < min_duration_secs:
+                    logger.info(
+                        f"Skipping video {video_data['id']} - duration {duration_secs}s "
+                        f"is less than minimum {min_duration_secs}s"
+                    )
+                    continue
+                    
                 video = Video(
                     id=video_data["id"],
                     channel_id=video_data["channel_id"],
@@ -508,6 +531,7 @@ class ChannelTracker:
                     like_count=video_data.get("like_count"),
                     comment_count=video_data.get("comment_count"),
                     duration=video_data.get("duration"),
+                    duration_seconds=video_data.get("duration_seconds"),
                     thumbnail_url=video_data.get("thumbnail"),
                     url=video_data["url"],
                     status=VideoProcessingStatus.COLLECTED,

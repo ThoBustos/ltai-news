@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS videos (
     like_count INTEGER,
     comment_count INTEGER,
     duration TEXT,  -- ISO 8601 duration
+    duration_seconds INTEGER,
     thumbnail_url TEXT,
     url TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'collected', -- collected, processing, processed, failed, skipped
@@ -44,6 +45,7 @@ CREATE TABLE IF NOT EXISTS videos (
     processed_at TIMESTAMPTZ,
     processing_error TEXT,
     transcript_fetched BOOLEAN DEFAULT FALSE,
+    transcript_error TEXT,
     summary_generated BOOLEAN DEFAULT FALSE,
     tags_extracted BOOLEAN DEFAULT FALSE,
     raw_metadata JSONB,
@@ -63,7 +65,7 @@ CREATE TABLE IF NOT EXISTS video_transcripts (
     video_id TEXT PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
     transcript TEXT NOT NULL,
     language_code TEXT DEFAULT 'en',
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    extracted_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- 4. Video Processed Data (Deep analysis per video)
