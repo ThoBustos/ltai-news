@@ -82,6 +82,53 @@ class ChannelTracker:
         logger.info(f"Found {len(channels)} channels to track: {channels}")
         return channels
 
+    def resolve_identifier(self, identifier: str) -> Optional[Channel]:
+        """
+        Resolve a channel identifier (ID, Handle, or Name) to a Channel object.
+        Optimized to use the cheapest API calls first.
+        """
+        logger.debug(f"Resolving identifier: {identifier}")
+
+        # 1. If it's already a Channel ID (UC...)
+        if identifier.startswith("UC"):
+            metadata = self.youtube_client.get_channel_metadata(identifier)
+            if metadata:
+                return self._build_channel_from_metadata(metadata)
+
+        # 2. If it's a Handle (@...)
+        if identifier.startswith("@"):
+            metadata = self.youtube_client.get_channel_by_handle(identifier)
+            if metadata:
+                return self._build_channel_from_metadata(metadata)
+
+        # 3. Fallback: Search for it (Expensive: 100 units)
+        logger.warning(f"Falling back to expensive search for: {identifier}")
+        search_result = self.youtube_client.search_channel(identifier)
+        if search_result:
+            metadata = self.youtube_client.get_channel_metadata(search_result["id"])
+            if metadata:
+                return self._build_channel_from_metadata(metadata)
+
+        return None
+
+    def _build_channel_from_metadata(self, metadata: dict) -> Channel:
+        """Helper to build Channel object from metadata dict."""
+        return Channel(
+            id=metadata["id"],
+            name=metadata["title"],
+            handle=metadata.get("custom_url"),
+            custom_url=metadata.get("custom_url"),
+            description=metadata.get("description"),
+            thumbnail_url=metadata.get("thumbnail"),
+            published_at=_parse_datetime(metadata.get("published_at")),
+            subscriber_count=metadata.get("subscriber_count"),
+            video_count=metadata.get("video_count"),
+            view_count=metadata.get("view_count"),
+            uploads_playlist_id=metadata.get("uploads_playlist_id"),
+            last_synced_at=datetime.utcnow(),
+            raw_metadata=metadata,
+        )
+
     def search_and_resolve_channel(self, channel_name: str) -> Optional[Channel]:
         """
         Search for a channel by name and resolve to full Channel object.
@@ -208,15 +255,13 @@ class ChannelTracker:
 
         try:
             # 1. Try to find channel in database first to save quota (search = 100 units)
-            channel = self.channel_repo.get_by_name(channel_name)
-            if not channel:
-                channel = self.channel_repo.get_by_handle(channel_name)
+            channel = self.channel_repo.get_any_match(channel_name)
             
             if channel:
-                logger.debug(f"Found channel {channel.name} in database, skipping search")
+                logger.debug(f"Found channel {channel.name} in database, skipping resolution")
             else:
-                # 2. Resolve channel via YouTube API search if not found in DB
-                channel = self.search_and_resolve_channel(channel_name)
+                # 2. Resolve channel via YouTube API (optimized: handle=1 unit, search=100 units)
+                channel = self.resolve_identifier(channel_name)
                 
             if not channel:
                 error_msg = f"Could not resolve channel: {channel_name}"
@@ -455,15 +500,13 @@ class ChannelTracker:
 
         try:
             # 1. Try to find channel in database first to save quota (search = 100 units)
-            channel = self.channel_repo.get_by_name(channel_name)
-            if not channel:
-                channel = self.channel_repo.get_by_handle(channel_name)
+            channel = self.channel_repo.get_any_match(channel_name)
             
             if channel:
-                logger.debug(f"Found channel {channel.name} in database, skipping search")
+                logger.debug(f"Found channel {channel.name} in database, skipping resolution")
             else:
-                # 2. Resolve channel via YouTube API search if not found in DB
-                channel = self.search_and_resolve_channel(channel_name)
+                # 2. Resolve channel via YouTube API (optimized: handle=1 unit, search=100 units)
+                channel = self.resolve_identifier(channel_name)
 
             if not channel:
                 error_msg = f"Could not resolve channel: {channel_name}"

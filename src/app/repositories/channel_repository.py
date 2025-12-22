@@ -97,40 +97,53 @@ class ChannelRepository:
             logger.error(f"Failed to get channel {channel_id}: {e}")
             raise
 
-    def get_by_name(self, name: str) -> Optional[Channel]:
-        """Get channel by its exact name."""
+    def get_any_match(self, identifier: str) -> Optional[Channel]:
+        """
+        Robustly find a channel by ID, handle, or name.
+        
+        Matches in order:
+        1. Exact ID (UC...)
+        2. Handle (with or without @)
+        3. Exact Name (case-insensitive)
+        """
         try:
-            result = (
-                self.client.table(self.table)
-                .select("*")
-                .eq("name", name)
-                .limit(1)
-                .execute()
-            )
-            if result.data and len(result.data) > 0:
-                return Channel(**result.data[0])
-            return None
-        except Exception as e:
-            logger.error(f"Failed to get channel by name {name}: {e}")
-            return None
+            # 1. Try Exact ID
+            if identifier.startswith("UC"):
+                return self.get_channel_by_id(identifier)
 
-    def get_by_handle(self, handle: str) -> Optional[Channel]:
-        """Get channel by its handle or custom URL."""
-        try:
-            # Handle might have @ prefix
-            clean_handle = handle.lstrip('@')
+            # 2. Try Handle
+            clean_handle = identifier.lower()
+            # Ensure it starts with @ for handle matching if it doesn't already
+            if not clean_handle.startswith('@') and len(clean_handle) > 3:
+                # We'll check both with and without @ in the DB
+                search_handle = f"@{clean_handle}"
+            else:
+                search_handle = clean_handle
+            
             result = (
                 self.client.table(self.table)
                 .select("*")
-                .or_(f"handle.eq.{handle},handle.eq.{clean_handle},custom_url.ilike.%{clean_handle}%")
+                .or_(f"handle.ilike.{search_handle},handle.ilike.{clean_handle},custom_url.ilike.{search_handle}")
                 .limit(1)
                 .execute()
             )
-            if result.data and len(result.data) > 0:
+            if result.data:
                 return Channel(**result.data[0])
+
+            # 3. Try Case-Insensitive Name
+            result = (
+                self.client.table(self.table)
+                .select("*")
+                .ilike("name", identifier)
+                .limit(1)
+                .execute()
+            )
+            if result.data:
+                return Channel(**result.data[0])
+            
             return None
         except Exception as e:
-            logger.error(f"Failed to get channel by handle {handle}: {e}")
+            logger.error(f"Error in get_any_match for '{identifier}': {e}")
             return None
 
     def get_active_channels(self) -> List[Channel]:

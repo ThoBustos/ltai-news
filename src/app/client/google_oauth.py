@@ -51,9 +51,9 @@ class GoogleOAuthClient:
         self.youtube_service = build("youtube", "v3", credentials=creds)
         logger.info("Authenticated with YouTube API")
 
-    def _get_credentials(self) -> Credentials:
+    def _get_credentials(self) -> Any:
         """Get valid credentials from storage or OAuth flow."""
-        creds = None
+        creds: Any = None
 
         # Try to load existing token
         if self.token_file.exists():
@@ -115,6 +115,51 @@ class GoogleOAuthClient:
             "id": channel_id,
             "title": item["snippet"]["title"],
         }
+
+    def get_channel_by_handle(self, handle: str) -> Optional[dict]:
+        """
+        Get channel metadata by its handle (@username).
+        This is much cheaper (1 unit) than search (100 units).
+        """
+        if not self.youtube_service:
+            raise RuntimeError("Not authenticated. Call authenticate() first.")
+
+        # Ensure handle starts with @ for the API
+        if not handle.startswith('@'):
+            handle = f"@{handle}"
+
+        logger.debug(f"Getting channel by handle: {handle}")
+        try:
+            request = self.youtube_service.channels().list(
+                part="snippet,statistics,contentDetails",
+                forHandle=handle,
+            )
+            response = request.execute()
+
+            if not response.get("items"):
+                logger.debug(f"No channel found for handle: {handle}")
+                return None
+
+            channel = response["items"][0]
+            snippet = channel.get("snippet", {})
+            statistics = channel.get("statistics", {})
+            content_details = channel.get("contentDetails", {})
+
+            return {
+                "id": channel["id"],
+                "title": snippet.get("title"),
+                "description": snippet.get("description"),
+                "published_at": snippet.get("publishedAt"),
+                "thumbnail": snippet.get("thumbnails", {}).get("high", {}).get("url"),
+                "custom_url": snippet.get("customUrl"),
+                "subscriber_count": int(statistics.get("subscriberCount", 0)),
+                "video_count": int(statistics.get("videoCount", 0)),
+                "view_count": int(statistics.get("view_count", 0)) if "view_count" in statistics else int(statistics.get("viewCount", 0)),
+                "uploads_playlist_id": content_details.get("relatedPlaylists", {}).get("uploads"),
+            }
+        except Exception as e:
+            logger.error(f"Error getting channel by handle {handle}: {e}")
+            return None
 
     def get_channel_metadata(self, channel_id: str) -> Optional[dict]:
         """
@@ -234,13 +279,16 @@ class GoogleOAuthClient:
         if not self.youtube_service:
             raise RuntimeError("Not authenticated. Call authenticate() first.")
 
-        if since_datetime:
+        from datetime import datetime, timedelta, timezone
+
+        published_after: datetime
+        if since_datetime is not None:
             if since_datetime.tzinfo is None:
                 since_datetime = since_datetime.replace(tzinfo=timezone.utc)
-            published_after: datetime = since_datetime
+            published_after = since_datetime
             logger.debug(f"Getting videos for channel {channel_id} since {published_after.isoformat()}")
         else:
-            published_after: datetime = datetime.now(timezone.utc) - timedelta(hours=hours)
+            published_after = datetime.now(timezone.utc) - timedelta(hours=hours)
             logger.debug(f"Getting videos for channel {channel_id} (last {hours} hours: since {published_after.isoformat()})")
 
         # Get uploads playlist
