@@ -75,9 +75,6 @@ class ChannelRepository:
 
         Returns:
             Channel model or None if not found
-
-        Raises:
-            Exception: If database operation fails
         """
         try:
             result = (
@@ -99,6 +96,42 @@ class ChannelRepository:
                 return None
             logger.error(f"Failed to get channel {channel_id}: {e}")
             raise
+
+    def get_by_name(self, name: str) -> Optional[Channel]:
+        """Get channel by its exact name."""
+        try:
+            result = (
+                self.client.table(self.table)
+                .select("*")
+                .eq("name", name)
+                .limit(1)
+                .execute()
+            )
+            if result.data and len(result.data) > 0:
+                return Channel(**result.data[0])
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get channel by name {name}: {e}")
+            return None
+
+    def get_by_handle(self, handle: str) -> Optional[Channel]:
+        """Get channel by its handle or custom URL."""
+        try:
+            # Handle might have @ prefix
+            clean_handle = handle.lstrip('@')
+            result = (
+                self.client.table(self.table)
+                .select("*")
+                .or_(f"handle.eq.{handle},handle.eq.{clean_handle},custom_url.ilike.%{clean_handle}%")
+                .limit(1)
+                .execute()
+            )
+            if result.data and len(result.data) > 0:
+                return Channel(**result.data[0])
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get channel by handle {handle}: {e}")
+            return None
 
     def get_active_channels(self) -> List[Channel]:
         """

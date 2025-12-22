@@ -48,7 +48,7 @@ class ContentOrchestrator:
         try:
             # Phase 1: Extract content
             logger.info(f"Phase 1: Extracting content for {date_str}")
-            extraction_result = await self._extract_content(window)
+            extraction_result = await self._extract_content(target_date, window)
             
             # Phase 2: Extract transcripts
             logger.info(f"Phase 2: Extracting transcripts for {date_str}")
@@ -105,10 +105,11 @@ class ContentOrchestrator:
                 total_errors=total_errors,
             )
     
-    async def _extract_content(self, window: TimeWindow) -> ExtractionResult:
-        """Extract content for the given time window.
+    async def _extract_content(self, target_date: date, window: TimeWindow) -> ExtractionResult:
+        """Extract content for the given date and time window.
         
         Args:
+            target_date: Date to extract content for
             window: Time window to extract content for
             
         Returns:
@@ -118,8 +119,8 @@ class ContentOrchestrator:
         errors = []
         
         try:
-            # Use existing channel tracker to sync all channels
-            tracker_result = self.channel_tracker.sync_all_channels()
+            # Use date-specific syncing to respect backfills and historical windows
+            tracker_result = self.channel_tracker.sync_channels_for_date(target_date)
             
             # Count videos in our time window
             videos_in_window = 0
@@ -133,8 +134,11 @@ class ContentOrchestrator:
                 # Count videos that fall within our window
                 for video in sync_result.videos_collected:
                     if window.contains(video.published_at):
+                        logger.info(f"Found video in window: {video.id} - {video.title} ({video.published_at})")
                         videos_in_window += 1
                         videos_saved += 1
+                    else:
+                        logger.debug(f"Video {video.id} outside window: {video.published_at}")
             
             completed_at = datetime.now(timezone.utc)
             

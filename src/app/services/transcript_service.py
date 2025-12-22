@@ -1,5 +1,6 @@
 """Transcript service for video transcript extraction."""
 
+import asyncio
 from datetime import datetime, timezone, date
 from typing import Optional, List
 
@@ -26,7 +27,7 @@ class TranscriptService:
         
         # Initialize transcript.io client if configured
         api_key = getattr(settings, 'transcript_io_api_key', None)
-        base_url = getattr(settings, 'transcript_io_base_url', "https://api.youtube-transcript.io/v1")
+        base_url = getattr(settings, 'transcript_io_base_url', "https://www.youtube-transcript.io/api")
         
         if api_key:
             self.client = TranscriptIoClient(api_key, base_url)
@@ -283,9 +284,10 @@ class TranscriptService:
                         error_msg = f"Failed to extract transcript for video {video.id}: {result.error}"
                         logger.warning(error_msg)
                         errors.append(error_msg)
-                        
-                        # For terminal failures, we still count this as "processed"
-                        # because we won't try again
+                    
+                    # Rate limiting: Sleep 2 seconds between videos to stay within API limit
+                    # (5 requests per 10 seconds = 1 request per 2 seconds)
+                    await asyncio.sleep(2)
                         
                 except Exception as e:
                     transcripts_failed += 1

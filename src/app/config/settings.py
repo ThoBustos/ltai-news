@@ -1,10 +1,21 @@
 """Application settings and configuration."""
 
 import os
-from typing import List, Optional
+from typing import List, Optional, Any
 
 from pydantic import BaseModel, Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def parse_tracked_channels(value: Any) -> List[str]:
+    """Utility function to parse tracked channels."""
+    if value is None or value == "":
+        return []
+    if isinstance(value, str):
+        return [ch.strip() for ch in value.split(",") if ch.strip()]
+    if isinstance(value, list):
+        return [str(ch) for ch in value if ch]
+    return []
 
 
 class Settings(BaseSettings):
@@ -35,6 +46,24 @@ class Settings(BaseSettings):
         ge=0,
         description="Minimum video duration in minutes to be collected",
         alias="MIN_VIDEO_DURATION_MINUTES",
+    )
+    bypass_duration_channels_raw: Optional[str] = Field(
+        default=None,
+        alias="BYPASS_DURATION_CHANNELS",
+        description="Comma-separated list of channel names/handles to bypass duration limits",
+        exclude=True,
+    )
+    bypass_lookback_channels_raw: Optional[str] = Field(
+        default=None,
+        alias="BYPASS_LOOKBACK_CHANNELS",
+        description="Comma-separated list of channel names/handles to bypass lookback limits",
+        exclude=True,
+    )
+    extended_lookback_hours: int = Field(
+        default=720,  # 30 days
+        ge=1,
+        description="Hours to look back for VIP channels",
+        alias="EXTENDED_LOOKBACK_HOURS",
     )
 
     # Supabase Configuration
@@ -84,7 +113,7 @@ class Settings(BaseSettings):
         alias="TRANSCRIPT_IO_API_KEY",
     )
     transcript_io_base_url: str = Field(
-        default="https://api.youtube-transcript.io/v1",
+        default="https://www.youtube-transcript.io/api",
         description="Base URL for transcript.io API",
         alias="TRANSCRIPT_IO_BASE_URL",
     )
@@ -115,17 +144,21 @@ class Settings(BaseSettings):
         ]
         return channels
 
-    @staticmethod
-    def parse_tracked_channels(value) -> List[str]:
-        """Utility method to parse tracked channels (for testing)."""
-        if value is None or value == "":
+    @computed_field
+    @property
+    def bypass_duration_channels(self) -> List[str]:
+        """Parse BYPASS_DURATION_CHANNELS from comma-separated string."""
+        if self.bypass_duration_channels_raw is None or not self.bypass_duration_channels_raw.strip():
             return []
-        if isinstance(value, str):
-            return [ch.strip() for ch in value.split(",") if ch.strip()]
-        if isinstance(value, list):
-            return value
-        return []
+        return [ch.strip() for ch in self.bypass_duration_channels_raw.split(",") if ch.strip()]
 
+    @computed_field
+    @property
+    def bypass_lookback_channels(self) -> List[str]:
+        """Parse BYPASS_LOOKBACK_CHANNELS from comma-separated string."""
+        if self.bypass_lookback_channels_raw is None or not self.bypass_lookback_channels_raw.strip():
+            return []
+        return [ch.strip() for ch in self.bypass_lookback_channels_raw.split(",") if ch.strip()]
 
 settings = Settings()
 

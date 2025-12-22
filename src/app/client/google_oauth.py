@@ -2,7 +2,8 @@
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict, Any
+from datetime import datetime, timedelta, timezone
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -45,7 +46,7 @@ class GoogleOAuthClient:
 
     def authenticate(self) -> None:
         """Authenticate and build YouTube service."""
-        creds = self._get_credentials()
+        creds: Any = self._get_credentials()
         self.credentials = creds
         self.youtube_service = build("youtube", "v3", credentials=creds)
         logger.info("Authenticated with YouTube API")
@@ -218,13 +219,29 @@ class GoogleOAuthClient:
             logger.error(f"Error getting video metadata: {e}", exc_info=True)
             return None
 
-    def get_recent_videos(self, channel_id: str, hours: int = 24) -> list[dict]:
-        """Get videos published in the last N hours."""
+    def get_recent_videos(self, channel_id: str, hours: int = 24, since_datetime: Optional[datetime] = None) -> List[Dict[str, Any]]:
+        """
+        Get videos published since a specific datetime or in the last N hours.
+        
+        Args:
+            channel_id: YouTube channel ID
+            hours: Number of hours to look back (used if since_datetime is None)
+            since_datetime: Specific UTC datetime to look back to
+            
+        Returns:
+            List of video dicts
+        """
         if not self.youtube_service:
             raise RuntimeError("Not authenticated. Call authenticate() first.")
 
-        logger.debug(f"Getting recent videos for channel {channel_id} (last {hours} hours)")
-        from datetime import datetime, timedelta
+        if since_datetime:
+            if since_datetime.tzinfo is None:
+                since_datetime = since_datetime.replace(tzinfo=timezone.utc)
+            published_after: datetime = since_datetime
+            logger.debug(f"Getting videos for channel {channel_id} since {published_after.isoformat()}")
+        else:
+            published_after: datetime = datetime.now(timezone.utc) - timedelta(hours=hours)
+            logger.debug(f"Getting videos for channel {channel_id} (last {hours} hours: since {published_after.isoformat()})")
 
         # Get uploads playlist
         channel_request = self.youtube_service.channels().list(
@@ -241,7 +258,6 @@ class GoogleOAuthClient:
         ]["uploads"]
 
         # Get videos
-        published_after = datetime.utcnow() - timedelta(hours=hours)
         videos = []
 
         request = self.youtube_service.playlistItems().list(
@@ -252,36 +268,38 @@ class GoogleOAuthClient:
         response = request.execute()
 
         for item in response.get("items", []):
-            published_at = datetime.fromisoformat(
-                item["snippet"]["publishedAt"].replace("Z", "+00:00")
-            )
-            if published_at.replace(tzinfo=None) >= published_after:
+            published_at_str = item["snippet"]["publishedAt"]
+            published_at = datetime.fromisoformat(published_at_str.replace("Z", "+00:00"))
+            
+            # Comparison in UTC
+            if published_at >= published_after:
                 videos.append(
                     {
                         "id": item["snippet"]["resourceId"]["videoId"],
                         "title": item["snippet"]["title"],
-                        "published_at": item["snippet"]["publishedAt"],
+                        "published_at": published_at_str,
                     }
                 )
 
-        logger.info(f"Found {len(videos)} recent videos for channel {channel_id}")
+        logger.info(f"Found {len(videos)} videos for channel {channel_id} published after {published_after.isoformat()}")
         return videos
 
     def get_recent_videos_with_metadata(
-        self, channel_id: str, hours: int = 24
-    ) -> list[dict]:
+        self, channel_id: str, hours: int = 24, since_datetime: Optional[datetime] = None
+    ) -> List[Dict[str, Any]]:
         """
-        Get videos published in the last N hours with full metadata.
+        Get videos published since a specific datetime or in the last N hours with full metadata.
 
         Args:
             channel_id: YouTube channel ID
-            hours: Number of hours to look back
+            hours: Number of hours to look back (used if since_datetime is None)
+            since_datetime: Specific UTC datetime to look back to
 
         Returns:
             List of video dicts with complete metadata
         """
-        logger.debug(f"Getting recent videos with metadata for channel {channel_id} (last {hours} hours)")
-        video_ids = [v["id"] for v in self.get_recent_videos(channel_id, hours)]
+        logger.debug(f"Getting recent videos with metadata for channel {channel_id}")
+        video_ids = [v["id"] for v in self.get_recent_videos(channel_id, hours, since_datetime)]
         if not video_ids:
             logger.debug(f"No recent videos found for channel {channel_id}")
             return []

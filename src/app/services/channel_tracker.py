@@ -12,6 +12,30 @@ from app.models.video import Video, VideoProcessingStatus
 from app.repositories import ChannelRepository, VideoRepository
 
 
+def _parse_datetime(dt_str: Optional[str]) -> Optional[datetime]:
+    """
+    Parse datetime string from YouTube API format.
+
+    Args:
+        dt_str: ISO format datetime string
+
+    Returns:
+        datetime object or None
+    """
+    if not dt_str:
+        return None
+
+    try:
+        # YouTube API returns ISO format with Z suffix
+        dt_str_clean = str(dt_str)
+        if dt_str_clean.endswith("Z"):
+            dt_str_clean = dt_str_clean[:-1] + "+00:00"
+        return datetime.fromisoformat(dt_str_clean)
+    except (ValueError, AttributeError) as e:
+        logger.warning(f"Could not parse datetime '{dt_str}': {e}")
+        return None
+
+
 class ChannelTracker:
     """Service for tracking YouTube channels and collecting recent videos."""
 
@@ -93,7 +117,7 @@ class ChannelTracker:
             custom_url=metadata.get("custom_url"),
             description=metadata.get("description"),
             thumbnail_url=metadata.get("thumbnail"),
-            published_at=self._parse_datetime(metadata.get("published_at")),
+            published_at=_parse_datetime(metadata.get("published_at")),
             subscriber_count=metadata.get("subscriber_count"),
             video_count=metadata.get("video_count"),
             view_count=metadata.get("view_count"),
@@ -109,7 +133,7 @@ class ChannelTracker:
         return channel
 
     def fetch_recent_videos(
-        self, channel_id: str, hours: Optional[int] = None
+        self, channel_id: str, hours: Optional[int] = None, bypass_duration: bool = False
     ) -> List[Video]:
         """
         Fetch recent videos from a channel.
@@ -117,6 +141,7 @@ class ChannelTracker:
         Args:
             channel_id: YouTube channel ID
             hours: Number of hours to look back (defaults to settings value)
+            bypass_duration: If True, skips the minimum duration filter
 
         Returns:
             List of Video objects
@@ -124,7 +149,7 @@ class ChannelTracker:
         lookback_hours = hours or self.settings.content_lookback_hours
         logger.debug(
             f"Fetching recent videos for channel {channel_id} "
-            f"(last {lookback_hours} hours)"
+            f"(last {lookback_hours} hours, bypass_duration={bypass_duration})"
         )
 
         # Get videos with metadata
@@ -137,12 +162,12 @@ class ChannelTracker:
         min_duration_secs = self.settings.min_video_duration_minutes * 60
         
         for video_data in videos_data:
-            # Skip if video is too short (e.g. Shorts)
+            # Skip if video is too short (unless bypassing)
             duration_secs = video_data.get("duration_seconds", 0)
-            if duration_secs < min_duration_secs:
+            if not bypass_duration and duration_secs < min_duration_secs:
                 logger.info(
                     f"Skipping video {video_data['id']} - duration {duration_secs}s "
-                    f"is less than minimum {min_duration_secs}s"
+                    f"is less than minimum {min_duration_secs}s (channel not bypassed)"
                 )
                 continue
                 
@@ -151,7 +176,7 @@ class ChannelTracker:
                 channel_id=video_data["channel_id"],
                 title=video_data["title"],
                 description=video_data.get("description"),
-                published_at=self._parse_datetime(video_data["published_at"]),
+                published_at=_parse_datetime(video_data["published_at"]),
                 view_count=video_data.get("view_count"),
                 like_count=video_data.get("like_count"),
                 comment_count=video_data.get("comment_count"),
@@ -182,8 +207,17 @@ class ChannelTracker:
         logger.info(f"Syncing channel: {channel_name}")
 
         try:
-            # Resolve channel
-            channel = self.search_and_resolve_channel(channel_name)
+            # 1. Try to find channel in database first to save quota (search = 100 units)
+            channel = self.channel_repo.get_by_name(channel_name)
+            if not channel:
+                channel = self.channel_repo.get_by_handle(channel_name)
+            
+            if channel:
+                logger.debug(f"Found channel {channel.name} in database, skipping search")
+            else:
+                # 2. Resolve channel via YouTube API search if not found in DB
+                channel = self.search_and_resolve_channel(channel_name)
+                
             if not channel:
                 error_msg = f"Could not resolve channel: {channel_name}"
                 logger.error(error_msg)
@@ -200,14 +234,30 @@ class ChannelTracker:
                     error=error_msg,
                 )
 
-            # Save channel to database
+            # Save/Update channel to database
             try:
                 self.channel_repo.upsert_channel(channel)
             except Exception as e:
                 logger.warning(f"Failed to save channel to database: {e}")
 
+            # Check for bypasses
+            bypass_duration = any(
+                b.lower() in [channel_name.lower(), channel.name.lower(), channel.handle.lower() if channel.handle else ""] 
+                for b in self.settings.bypass_duration_channels
+            )
+            bypass_lookback = any(
+                b.lower() in [channel_name.lower(), channel.name.lower(), channel.handle.lower() if channel.handle else ""] 
+                for b in self.settings.bypass_lookback_channels
+            )
+            
+            hours = self.settings.extended_lookback_hours if bypass_lookback else None
+            if bypass_duration:
+                logger.info(f"Channel {channel.name} is bypassing duration limits")
+            if bypass_lookback:
+                logger.info(f"Channel {channel.name} is bypassing lookback limits (using {hours} hours)")
+
             # Fetch recent videos
-            videos = self.fetch_recent_videos(channel.id)
+            videos = self.fetch_recent_videos(channel.id, hours=hours, bypass_duration=bypass_duration)
 
             # Save videos to database (only new ones)
             saved_videos = []
@@ -404,8 +454,17 @@ class ChannelTracker:
         logger.info(f"Syncing channel {channel_name} for date {target_date}")
 
         try:
-            # Resolve channel
-            channel = self.search_and_resolve_channel(channel_name)
+            # 1. Try to find channel in database first to save quota (search = 100 units)
+            channel = self.channel_repo.get_by_name(channel_name)
+            if not channel:
+                channel = self.channel_repo.get_by_handle(channel_name)
+            
+            if channel:
+                logger.debug(f"Found channel {channel.name} in database, skipping search")
+            else:
+                # 2. Resolve channel via YouTube API search if not found in DB
+                channel = self.search_and_resolve_channel(channel_name)
+
             if not channel:
                 error_msg = f"Could not resolve channel: {channel_name}"
                 logger.error(error_msg)
@@ -422,14 +481,22 @@ class ChannelTracker:
                     error=error_msg,
                 )
 
-            # Save channel to database
+            # Save/Update channel to database
             try:
                 self.channel_repo.upsert_channel(channel)
             except Exception as e:
                 logger.warning(f"Failed to save channel to database: {e}")
 
+            # Check for bypasses (only duration bypass applies here as window is fixed)
+            bypass_duration = any(
+                b.lower() in [channel_name.lower(), channel.name.lower(), channel.handle.lower() if channel.handle else ""] 
+                for b in self.settings.bypass_duration_channels
+            )
+            if bypass_duration:
+                logger.info(f"Channel {channel.name} is bypassing duration limits for date {target_date}")
+
             # Fetch videos in window
-            videos = self.fetch_videos_in_window(channel.id, window)
+            videos = self.fetch_videos_in_window(channel.id, window, bypass_duration=bypass_duration)
 
             # Save videos to database (only new ones)
             saved_videos = []
@@ -479,30 +546,26 @@ class ChannelTracker:
                 error=str(e),
             )
 
-    def fetch_videos_in_window(self, channel_id: str, window: TimeWindow) -> List[Video]:
+    def fetch_videos_in_window(self, channel_id: str, window: TimeWindow, bypass_duration: bool = False) -> List[Video]:
         """
         Fetch videos from a channel within a specific time window.
 
         Args:
             channel_id: YouTube channel ID
             window: TimeWindow to filter videos by
+            bypass_duration: If True, skips the minimum duration filter
 
         Returns:
             List of Video objects published within the window
         """
         logger.debug(
             f"Fetching videos for channel {channel_id} in window "
-            f"{window.start_utc} to {window.end_utc}"
+            f"{window.start_utc} to {window.end_utc} (bypass_duration={bypass_duration})"
         )
 
-        # Calculate hours from window duration for existing API
-        hours = int(window.duration_seconds / 3600)
-        if hours < 1:
-            hours = 1  # Minimum 1 hour
-
-        # Get videos with metadata using existing method
+        # Get videos with metadata using the window start as our lookback anchor
         videos_data = self.youtube_client.get_recent_videos_with_metadata(
-            channel_id, hours=hours
+            channel_id, since_datetime=window.start_utc
         )
 
         # Filter videos to only include those in our exact window
@@ -510,14 +573,14 @@ class ChannelTracker:
         min_duration_secs = self.settings.min_video_duration_minutes * 60
         
         for video_data in videos_data:
-            published_at = self._parse_datetime(video_data["published_at"])
+            published_at = _parse_datetime(video_data["published_at"])
             if published_at and window.contains(published_at):
-                # Skip if video is too short
+                # Skip if video is too short (unless bypassing)
                 duration_secs = video_data.get("duration_seconds", 0)
-                if duration_secs < min_duration_secs:
+                if not bypass_duration and duration_secs < min_duration_secs:
                     logger.info(
                         f"Skipping video {video_data['id']} - duration {duration_secs}s "
-                        f"is less than minimum {min_duration_secs}s"
+                        f"is less than minimum {min_duration_secs}s (channel not bypassed)"
                     )
                     continue
                     
@@ -543,26 +606,6 @@ class ChannelTracker:
         logger.info(f"Collected {len(videos)} videos from channel {channel_id} in window {window.date_str}")
         return videos
 
-    @staticmethod
-    def _parse_datetime(dt_str: Optional[str]) -> Optional[datetime]:
-        """
-        Parse datetime string from YouTube API format.
+    # (Removed _parse_datetime from here)
 
-        Args:
-            dt_str: ISO format datetime string
-
-        Returns:
-            datetime object or None
-        """
-        if not dt_str:
-            return None
-
-        try:
-            # YouTube API returns ISO format with Z suffix
-            if dt_str.endswith("Z"):
-                dt_str = dt_str[:-1] + "+00:00"
-            return datetime.fromisoformat(dt_str)
-        except (ValueError, AttributeError) as e:
-            logger.warning(f"Could not parse datetime '{dt_str}': {e}")
-            return None
 
