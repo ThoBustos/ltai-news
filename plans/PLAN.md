@@ -10,3 +10,4 @@
 - Create the agentic logic to put all the extracted infos together nicely.  **(ON THIS!)**
 - Create the logic to save everything and connect to front end.
 - Add opik for tracing and costs.
+
