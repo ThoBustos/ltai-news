@@ -248,7 +248,7 @@ class VideoRepository:
 
             if status == VideoProcessingStatus.PROCESSED:
                 update_data["processed_at"] = datetime.utcnow().isoformat()
-            elif status == VideoProcessingStatus.FAILED:
+            elif status == VideoProcessingStatus.FAILED and error is not None:
                 update_data["processing_error"] = error
 
             self.client.table(self.table).update(update_data).eq("id", video_id).execute()
@@ -482,6 +482,7 @@ class VideoRepository:
             transcript_data = {
                 "video_id": video_id,
                 "transcript": transcript,
+                "char_count": len(transcript),
                 "language_code": language_code,
                 "extracted_at": datetime.utcnow().isoformat(),
             }

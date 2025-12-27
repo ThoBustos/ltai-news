@@ -64,6 +64,7 @@ CREATE INDEX IF NOT EXISTS idx_videos_published_at ON videos(published_at DESC);
 CREATE TABLE IF NOT EXISTS video_transcripts (
     video_id TEXT PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
     transcript TEXT NOT NULL,
+    char_count INTEGER NOT NULL,
     language_code TEXT DEFAULT 'en',
     extracted_at TIMESTAMPTZ DEFAULT NOW()
 );

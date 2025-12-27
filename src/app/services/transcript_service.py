@@ -76,6 +76,7 @@ class TranscriptService:
                     video_id=video.id,
                     success=True,
                     transcript=transcript_text,
+                    char_count=len(transcript_text),
                     language_code=language_code,
                     error=None,
                     extracted_at=extracted_at

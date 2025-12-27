@@ -148,15 +148,18 @@ class TranscriptResult(BaseModel):
     
     video_id: str
     success: bool
-    transcript: Optional[str]
-    language_code: Optional[str]
-    error: Optional[str]
+    transcript: Optional[str] = None
+    char_count: Optional[int] = None
+    language_code: Optional[str] = "en"
+    error: Optional[str] = None
     extracted_at: datetime
     
     @computed_field
     @property
     def character_count(self) -> int:
         """Get transcript character count."""
+        if self.char_count is not None:
+            return self.char_count
         return len(self.transcript) if self.transcript else 0
     
     @computed_field
