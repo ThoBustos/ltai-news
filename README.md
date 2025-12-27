@@ -44,7 +44,103 @@ This repo is the backend + pipeline. The frontend already exists and will consum
 
 4. The existing **thomasbustos.com** frontend:
    - Reads from Supabase or a simple read-only API
-   - Can show archives, stats, or “today’s digest”.
+   - Can show archives, stats, or "today's digest".
+
+---
+
+## Usage
+
+### Starting the Server
+
+```bash
+PYTHONPATH=src uv run python src/app/main.py
+```
+
+The API will be available at `http://localhost:8000` with interactive docs at `http://localhost:8000/docs`.
+
+### Pipeline Operations
+
+#### Run Daily Pipeline
+Process all content for a specific date (extraction → transcription → analysis):
+
+```bash
+# Synchronous (waits for completion)
+curl -X POST http://localhost:8000/api/orchestrator/run-daily/2025-01-20
+
+# Asynchronous (returns immediately, runs in background)
+curl -X POST http://localhost:8000/api/orchestrator/run-daily/2025-01-20/async
+```
+
+#### Check Pipeline Status
+Get the current status of pipeline execution for a date:
+
+```bash
+curl http://localhost:8000/api/orchestrator/status/2025-01-20
+```
+
+#### Extract Transcripts Only
+Extract transcripts for videos on a specific date (standalone operation):
+
+```bash
+# Synchronous
+curl -X POST http://localhost:8000/api/orchestrator/extract-transcripts/2025-01-20
+
+# Asynchronous
+curl -X POST http://localhost:8000/api/orchestrator/extract-transcripts/2025-01-20/async
+```
+
+#### Backfill Date Range
+Process multiple dates in sequence (useful for historical data):
+
+```bash
+# Synchronous
+curl -X POST http://localhost:8000/api/orchestrator/backfill \
+  -H "Content-Type: application/json" \
+  -d '{"start_date": "2025-01-15", "end_date": "2025-01-20"}'
+
+# Asynchronous
+curl -X POST http://localhost:8000/api/orchestrator/backfill/async \
+  -H "Content-Type: application/json" \
+  -d '{"start_date": "2025-01-15", "end_date": "2025-01-20"}'
+```
+
+### Channel Management
+
+#### List Tracked Channels
+View all configured channels:
+
+```bash
+curl http://localhost:8000/api/channels/list
+```
+
+#### Sync Channels
+Manually trigger sync of all configured channels (fetch recent videos):
+
+```bash
+curl -X POST http://localhost:8000/api/channels/sync
+```
+
+#### Resolve Channel
+Test channel resolution before adding to tracked list:
+
+```bash
+curl -X POST http://localhost:8000/api/channels/resolve/@channelname
+```
+
+### Health & Info
+
+```bash
+# Service info
+curl http://localhost:8000/
+
+# Orchestrator health check
+curl http://localhost:8000/api/orchestrator/health
+
+# Interactive API documentation
+open http://localhost:8000/docs
+```
+
+**Note:** Date format is `YYYY-MM-DD` (e.g., `2025-01-20`). Replace `localhost:8000` with your production server URL when deployed.
 
 ---
 
