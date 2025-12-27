@@ -1,7 +1,15 @@
-# Video Analysis Implementation Plan (Phase 3)
+# Video Analysis Implementation Plan (Phase 3) - ENHANCED
 
 ## Overview
-This document outlines the implementation of **Phase 3: Video Processing** using LangGraph and Gemini Flash 3. The system will analyze video transcripts to extract structured insights including TLDR, core topics, lessons learned, sources, concepts, and detailed analysis. All processing will be instrumented with Opik for observability, and cost/time metrics will be tracked at both per-step and aggregate levels.
+This document outlines the implementation of **Phase 3: Video Processing** using LangGraph and **Gemini 3.0 Flash**. The system will analyze video transcripts to extract structured insights including TLDR, core topics, lessons learned, sources, concepts, and detailed analysis. All processing will be instrumented with **Opik for comprehensive observability**, using **structured outputs with Pydantic models**, **centralized prompt management**, and **app-level Opik configuration**. Cost/time metrics will be tracked at both per-step and aggregate levels.
+
+### ✨ Key Enhancements
+- **Structured Outputs**: Direct Pydantic model validation with `llm.with_structured_output()`
+- **Opik Prompt Management**: Centralized prompt versioning and management
+- **App-Level Opik Config**: Centralized configuration for all agents and workflows
+- **Enhanced Data Models**: Clean separation between LLM schemas and database entities  
+- **Gemini 3.0 Flash**: Latest model with enhanced capabilities
+- **Type-Safe State**: TypedDict for LangGraph state management
 
 ---
 
@@ -39,8 +47,9 @@ This document outlines the implementation of **Phase 3: Video Processing** using
 
 **LangGraph Agent/Workflow**
 - Multi-node workflow for structured extraction
-- Integration with Gemini Flash 3
-- Opik instrumentation for observability
+- Integration with Gemini 3.0 Flash
+- App-level Opik instrumentation for observability
+- Structured outputs using Pydantic models
 - Cost and time tracking per node
 
 **Data Models**
@@ -106,32 +115,69 @@ END
 - **Error Handling**: If any node fails, entire workflow fails (can be enhanced later for partial results)
 - **Idempotency**: Workflow can be re-run safely (upsert pattern in repository)
 
-### 2. Prompt Storage Strategy
+### 2. Enhanced Prompt Management with Opik ✨ NEW
 
-**Decision: Store prompts in agent file for v1**
+**Decision: Use Opik ChatPrompt for Centralized Management**
 
 **File:** `src/app/agents/video_analyzer/prompts.py`
 
-**Rationale:**
-- **V1 Simplicity**: Keep prompts close to code for easy iteration
-- **Version Control**: Git tracks prompt changes naturally
-- **Future Migration**: Can migrate to Opik prompt versioning later without code changes
+**Benefits:**
+- **Automatic Versioning**: Opik tracks prompt changes automatically
+- **Central Management**: View/edit prompts in Opik UI
+- **Experiment Linking**: Connect prompts to specific experiment runs
+- **Team Collaboration**: Share prompts across team members
+- **Structured Output Schema Binding**: Link prompts to Pydantic response models
 
 **Structure:**
 ```python
-# Each prompt as a function that takes context and returns formatted prompt
-def get_tldr_prompt(video_title: str, transcript: str, description: str) -> str:
-    """Generate TLDR extraction prompt."""
-    ...
+import opik
+from app.models.video_analysis.schemas import TLDRResponse, CoreTopicsResponse
 
-def get_core_topics_prompt(transcript: str, tldr: str) -> str:
-    """Generate core topics extraction prompt."""
-    ...
+class VideoAnalysisPrompts:
+    """Centralized prompt management using Opik ChatPrompt system."""
+    
+    @staticmethod
+    def get_tldr_prompt() -> opik.ChatPrompt:
+        """Get TLDR extraction chat prompt with structured output schema."""
+        messages = [
+            {
+                "role": "system", 
+                "content": "You are an expert at creating concise, informative summaries of technical videos."
+            },
+            {
+                "role": "user",
+                "content": """
+                VIDEO TITLE: {{title}}
+                VIDEO DESCRIPTION: {{description}}
+                TRANSCRIPT: {{transcript}}
+                
+                Create a 1-2 paragraph TLDR that captures:
+                1. The main purpose/goal of the video
+                2. The key insights or learnings  
+                3. Who would benefit from watching this
+                
+                Make it engaging and informative for busy professionals.
+                
+                Also provide a confidence score (0.0-1.0) for your analysis quality.
+                """
+            }
+        ]
+        
+        return opik.ChatPrompt(
+            name="video-tldr-extraction",
+            messages=messages,
+            metadata={
+                "category": "video-analysis",
+                "output_schema": "TLDRResponse",
+                "version": "1.0"
+            }
+        )
 ```
 
-**Future Consideration:**
-- Opik prompt versioning can be added later
-- Consider prompt registry pattern if prompts grow complex
+**Integration with Opik Experiments:**
+- Prompts automatically linked to traces and experiments
+- Version history tracked in Opik platform
+- A/B testing different prompt versions
 
 ### 3. Cost & Time Tracking
 
@@ -178,22 +224,75 @@ ALTER TABLE video_processed_data ADD COLUMN IF NOT EXISTS processing_metadata JS
 }
 ```
 
-### 4. Opik Integration
+### 4. App-Level Opik Integration Strategy ✨ NEW
 
-**Purpose:** Observability for LangGraph agent execution
+**Decision: Centralized App-Level Opik Configuration**
 
-**Configuration:**
-- Environment variables: `OPIK_API_KEY`, `OPIK_PROJECT_NAME`, `OPIK_WORKSPACE`
-- Initialize Opik client in agent initialization
-- Instrument each LangGraph node with Opik tracing
+**File:** `src/app/core/opik_manager.py`
+
+**Rationale:**
+- **Centralized Config**: Single place to manage Opik settings for all agents
+- **Consistent Project Naming**: All workflows under same project umbrella  
+- **Shared Authentication**: Single API key and workspace management
+- **Cross-Workflow Debugging**: Easier to trace across multiple agents
+
+**Implementation:**
+```python
+# src/app/core/opik_manager.py
+import opik
+from opik.integrations.langchain import track_langgraph, OpikTracer
+from app.core.logging import logger
+from app.config.settings import settings
+
+class OpikManager:
+    """Centralized Opik management for all agents and workflows."""
+    
+    def __init__(self):
+        if settings.opik_api_key:
+            opik.configure(
+                api_key=settings.opik_api_key,
+                project_name=settings.opik_project_name or "ltai-news",
+                workspace=settings.opik_workspace
+            )
+            self.enabled = True
+            logger.info(f"Opik configured for project: {settings.opik_project_name}")
+        else:
+            self.enabled = False
+            logger.warning("Opik API key not found - tracing disabled")
+    
+    def create_tracer(self, workflow_name: str, tags: list = None) -> OpikTracer:
+        """Create workflow-specific tracer with consistent project settings."""
+        if not self.enabled:
+            return None
+            
+        return OpikTracer(
+            project_name=settings.opik_project_name or "ltai-news",
+            tags=(tags or []) + [workflow_name, "production"],
+            metadata={
+                "workflow": workflow_name,
+                "version": "1.0",
+                "environment": "production"
+            }
+        )
+    
+    def track_workflow(self, compiled_graph, workflow_name: str, tags: list = None):
+        """Wrap LangGraph with Opik tracking."""
+        if not self.enabled:
+            return compiled_graph
+            
+        tracer = self.create_tracer(workflow_name, tags)
+        return track_langgraph(compiled_graph, tracer)
+
+# Global instance
+opik_manager = OpikManager()
+```
 
 **What to Track:**
-- Each node execution (start/end time, tokens, cost)
-- LLM calls (prompt, response, metadata)
-- Errors and retries
-- Workflow-level metrics
-
-**File:** `src/app/agents/video_analyzer/opik_instrumentation.py`
+- Each node execution (start/end time, tokens, cost, confidence scores)
+- LLM calls with structured prompts and responses
+- Errors and retry attempts
+- Workflow-level metrics and performance
+- Prompt usage and effectiveness metrics
 
 ---
 
@@ -235,153 +334,387 @@ ALTER TABLE video_processed_data ADD COLUMN IF NOT EXISTS total_processing_time_
 
 ---
 
-### Phase 2: Data Models
+### Phase 2: Enhanced Data Models ✨ NEW
 
-#### 2.1 Create Video Analysis Models
-**File:** `src/app/models/video_analysis.py`
+#### 2.1 Create Domain-Organized Video Analysis Models
 
-**Models:**
+**Directory Structure:**
+```
+src/app/models/video_analysis/
+├── __init__.py
+├── schemas.py      # LLM response schemas for structured outputs
+├── responses.py    # Complete database entity models  
+└── metrics.py      # Processing metrics models
+```
+
+#### 2.1.1 LLM Response Schemas
+**File:** `src/app/models/video_analysis/schemas.py`
+
+**Purpose:** Clean Pydantic models for `llm.with_structured_output()` validation
+
 ```python
+"""LLM Response schemas for structured outputs - used with llm.with_structured_output()."""
+
+from pydantic import BaseModel, Field
+from typing import List, Literal, Optional
+from datetime import datetime
+
+class TLDRResponse(BaseModel):
+    """Structured response for TLDR extraction."""
+    tldr: str = Field(description="1-2 paragraph summary of the video")
+    confidence: float = Field(ge=0.0, le=1.0, description="Confidence in analysis quality")
+    key_audience: str = Field(description="Who would benefit most from this content")
+
 class CoreTopic(BaseModel):
-    topic: str
-    category: str  # e.g., "technical", "business", "philosophy"
-    importance: str  # "high", "medium", "low"
+    """Individual topic with metadata."""
+    topic: str = Field(description="Clear, specific topic name")
+    category: Literal["technical", "business", "philosophy", "general"] = Field(description="Topic category")
+    importance: Literal["high", "medium", "low"] = Field(description="Relative importance")
+    confidence: float = Field(ge=0.0, le=1.0, description="Extraction confidence")
+
+class CoreTopicsResponse(BaseModel):
+    """Structured response for core topics extraction."""
+    topics: List[CoreTopic] = Field(description="3-7 core topics identified")
+    reasoning: str = Field(description="Brief explanation of categorization approach")
+
+class LessonsLearnedResponse(BaseModel):
+    """Structured response for lessons extraction."""
+    technical_lessons: List[str] = Field(description="Technical insights and learnings")
+    business_lessons: List[str] = Field(description="Business strategy and insights")
+    general_lessons: List[str] = Field(description="General life/career insights")
+    confidence: float = Field(ge=0.0, le=1.0, description="Overall extraction confidence")
 
 class SourceReference(BaseModel):
-    type: str  # "paper", "book", "podcast", "link", "discord", "community", "event"
-    title: str
-    url: Optional[str] = None
-    author: Optional[str] = None
+    """Individual source reference."""
+    type: Literal["paper", "book", "podcast", "link", "discord", "community", "event"] = Field(description="Source type")
+    title: str = Field(description="Source title or name")
+    url: Optional[str] = Field(None, description="URL if available")
+    author: Optional[str] = Field(None, description="Author or creator")
+    confidence: float = Field(ge=0.0, le=1.0, description="Extraction confidence")
 
-class Concept(BaseModel):
-    concept: str
-    description: str
-    relevance: str  # Brief relevance note
+class SourcesResponse(BaseModel):
+    """Structured response for sources extraction."""
+    sources: List[SourceReference] = Field(description="Sources, papers, books, links mentioned")
+    reasoning: str = Field(description="Brief explanation of source identification")
 
-class PersonMentioned(BaseModel):
-    name: str
-    role: Optional[str] = None
-    affiliation: Optional[str] = None
+# ... Additional response schemas for other nodes
+```
 
-class CommunityMentioned(BaseModel):
-    type: str  # "discord", "community", "event"
-    name: str
-    url: Optional[str] = None
+#### 2.1.2 Database Entity Models
+**File:** `src/app/models/video_analysis/responses.py`
+
+**Purpose:** Complete analysis results for database storage
+
+```python
+"""Complete analysis responses - these are stored in database."""
+
+from pydantic import BaseModel, Field, ConfigDict
+from typing import List, Dict, Optional, Any
+from datetime import datetime
+from .schemas import CoreTopic, SourceReference
+from .metrics import ProcessingMetadata
+
+class VideoAnalysisComplete(BaseModel):
+    """Complete video analysis result - this goes to database."""
+    video_id: str
+    
+    # Analysis results (from LLM structured outputs)
+    tldr: str
+    key_audience: str
+    core_topics: List[CoreTopic]
+    lessons_learned: Dict[str, List[str]]  # Category -> list of lessons
+    detailed_insights: str
+    sources_referenced: List[SourceReference]
+    concepts_mentioned: List[Dict[str, Any]]
+    people_mentioned: List[Dict[str, str]]
+    communities_mentioned: List[Dict[str, str]]
+    metadata_extracted: Dict[str, Any]  # Full video/channel metadata
+    
+    # Processing metadata
+    total_tokens: int
+    total_cost: float
+    total_processing_time_seconds: float
+    processing_metadata: ProcessingMetadata
+    
+    # Model and timing info
+    model_name: str = "gemini-3.0-flash"  # Updated to 3.0
+    processed_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    model_config = ConfigDict(
+        json_encoders={
+            datetime: lambda v: v.isoformat()
+        }
+    )
+```
+
+#### 2.1.3 Processing Metrics Models  
+**File:** `src/app/models/video_analysis/metrics.py`
+
+```python
+"""Processing and performance tracking models."""
+
+from pydantic import BaseModel, Field
+from typing import List, Dict, Optional
+from datetime import datetime
 
 class NodeExecutionMetrics(BaseModel):
+    """Metrics for individual node execution."""
     node_name: str
     tokens_input: int
     tokens_output: int
     cost_usd: float
     processing_time_seconds: float
+    confidence_scores: Dict[str, float] = Field(default_factory=dict)
     status: str  # "success", "failed"
     error: Optional[str] = None
+    prompt_name: Optional[str] = None  # Opik prompt name used
 
 class ProcessingMetadata(BaseModel):
+    """Complete processing metadata for workflow execution."""
     nodes: List[NodeExecutionMetrics]
-    workflow_version: str
-    prompt_versions: Dict[str, str]
+    workflow_version: str = "1.0"
     opik_trace_id: Optional[str] = None
-
-class VideoAnalysis(BaseModel):
-    video_id: str
-    tldr: str
-    core_topics: List[CoreTopic]
-    lessons_learned: Dict[str, List[str]]  # Category -> list of lessons
-    detailed_insights: str
-    sources_referenced: List[SourceReference]
-    concepts_mentioned: List[Concept]
-    people_mentioned: List[PersonMentioned]
-    communities_mentioned: List[CommunityMentioned]
-    metadata_extracted: Dict[str, Any]  # Full video/channel metadata
-    total_tokens: int
-    total_cost: float
-    total_processing_time_seconds: float
-    processing_metadata: ProcessingMetadata
-    model_name: str = "gemini-2.0-flash-exp"
-    processed_at: datetime
+    opik_experiment_id: Optional[str] = None
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: Optional[datetime] = None
+    
+    @property
+    def total_processing_time(self) -> float:
+        """Calculate total processing time across all nodes."""
+        return sum(node.processing_time_seconds for node in self.nodes)
+    
+    @property
+    def total_cost(self) -> float:
+        """Calculate total cost across all nodes.""" 
+        return sum(node.cost_usd for node in self.nodes)
+    
+    @property
+    def total_tokens(self) -> int:
+        """Calculate total tokens across all nodes."""
+        return sum(node.tokens_input + node.tokens_output for node in self.nodes)
 ```
 
 ---
 
 ### Phase 3: LangGraph Agent Implementation
 
-#### 3.1 Create Agent Directory Structure
+#### 3.1 Create Enhanced Agent Directory Structure
 **Files:**
 - `src/app/agents/__init__.py`
 - `src/app/agents/video_analyzer/__init__.py`
-- `src/app/agents/video_analyzer/graph.py` - Main workflow definition
-- `src/app/agents/video_analyzer/nodes.py` - Individual node implementations
-- `src/app/agents/video_analyzer/prompts.py` - Prompt templates
-- `src/app/agents/video_analyzer/models.py` - Agent-specific models
-- `src/app/agents/video_analyzer/opik_instrumentation.py` - Opik integration
+- `src/app/agents/video_analyzer/graph.py` - Main workflow definition with type safety
+- `src/app/agents/video_analyzer/nodes.py` - Individual node implementations with structured outputs
+- `src/app/agents/video_analyzer/prompts.py` - Opik ChatPrompt management
+- `src/app/agents/video_analyzer/state.py` - TypedDict state definition
+- `src/app/core/opik_manager.py` - Centralized Opik management
 
-#### 3.2 Implement Prompts
-**File:** `src/app/agents/video_analyzer/prompts.py`
+#### 3.2 Implement Type-Safe State Management ✨ NEW
+**File:** `src/app/agents/video_analyzer/state.py`
 
-**Prompt Functions:**
-- `get_tldr_prompt()` - Generate TLDR (1-2 paragraphs)
-- `get_core_topics_prompt()` - Extract topics with categories
-- `get_lessons_learned_prompt()` - Extract lessons by category
-- `get_sources_prompt()` - Extract papers, books, podcasts, links
-- `get_concepts_prompt()` - Extract key concepts and ideas
-- `get_people_communities_prompt()` - Extract people, discords, communities, events
-- `get_detailed_insights_prompt()` - Generate extended analysis
-
-**Prompt Design Principles:**
-- Use structured output (JSON schema) for reliable extraction
-- Include examples in prompts where helpful
-- Keep prompts focused and specific
-- Version prompts (store version in processing_metadata)
-
-#### 3.3 Implement LangGraph Nodes
-**File:** `src/app/agents/video_analyzer/nodes.py`
-
-**Node Functions:**
 ```python
-async def load_context_node(state: dict) -> dict:
-    """Load video metadata, transcript, and channel info."""
-    # Fetch from repositories
-    # Return state with context loaded
+"""Type-safe state definition for video analysis workflow."""
 
-async def extract_tldr_node(state: dict) -> dict:
-    """Extract TLDR summary."""
-    # Call Gemini with TLDR prompt
-    # Track metrics (tokens, time, cost)
-    # Return state with tldr added
+from typing_extensions import TypedDict, NotRequired, List, Dict, Any
+from datetime import datetime
 
-async def extract_core_topics_node(state: dict) -> dict:
-    """Extract core topics with categories."""
-    # Call Gemini with core topics prompt
-    # Parse structured JSON response
-    # Track metrics
-    # Return state with core_topics added
-
-# ... similar for other nodes
+class VideoAnalysisState(TypedDict):
+    """Type-safe state for video analysis workflow."""
+    
+    # Input data (loaded in first node)
+    video_id: str
+    video: NotRequired[Dict[str, Any]]  # Video metadata
+    transcript: NotRequired[Dict[str, Any]]  # Transcript data
+    channel: NotRequired[Dict[str, Any]]  # Channel metadata
+    
+    # Analysis results (filled by nodes)
+    tldr: NotRequired[str]
+    key_audience: NotRequired[str]
+    core_topics: NotRequired[List[Dict[str, Any]]]
+    lessons_learned: NotRequired[Dict[str, List[str]]]
+    detailed_insights: NotRequired[str]
+    sources_referenced: NotRequired[List[Dict[str, Any]]]
+    concepts_mentioned: NotRequired[List[Dict[str, Any]]]
+    people_mentioned: NotRequired[List[Dict[str, str]]]
+    communities_mentioned: NotRequired[List[Dict[str, str]]]
+    
+    # Processing tracking
+    metrics: NotRequired[Dict[str, Any]]
+    confidence_scores: NotRequired[Dict[str, float]]
+    errors: NotRequired[List[str]]
 ```
 
-**Node Pattern:**
-1. Start timer
-2. Prepare prompt from context
-3. Call Gemini API (with Opik instrumentation)
-4. Parse response (structured JSON)
-5. Calculate metrics (tokens, cost, time)
-6. Update state
-7. Log metrics
-8. Return updated state
+#### 3.2 Implement Enhanced Opik Prompts (Already covered above)
 
-#### 3.4 Implement LangGraph Workflow
+**Prompt Design Principles:**
+- **Structured Output Schema Binding**: Each prompt linked to specific Pydantic response model
+- **Automatic Versioning**: Opik tracks all prompt changes
+- **Confidence Tracking**: Include confidence scores in all responses  
+- **Context-Aware**: Use previous node outputs to enhance subsequent prompts
+- **Token Optimization**: Truncate inputs appropriately for model limits
+
+#### 3.3 Implement Enhanced LangGraph Nodes with Structured Outputs ✨ NEW
+**File:** `src/app/agents/video_analyzer/nodes.py`
+
+**Complete Implementation Example:**
+```python
+"""Enhanced LangGraph nodes with structured outputs and Opik integration."""
+
+import time
+from typing import Dict, Any
+import opik
+from opik import track
+from app.client.gemini_client import GeminiClient
+from app.models.video_analysis.schemas import TLDRResponse, CoreTopicsResponse
+from app.models.video_analysis.metrics import NodeExecutionMetrics
+from app.agents.video_analyzer.prompts import VideoAnalysisPrompts
+from app.agents.video_analyzer.state import VideoAnalysisState
+from app.repositories.video_repository import VideoRepository
+from app.repositories.channel_repository import ChannelRepository
+from app.core.logging import logger
+
+@track(name="extract_tldr_node")
+async def extract_tldr_node(state: VideoAnalysisState) -> VideoAnalysisState:
+    """Extract TLDR using Gemini with structured Pydantic output."""
+    
+    logger.info(f"Extracting TLDR for video {state['video_id']}")
+    
+    try:
+        # Get prompt from Opik
+        chat_prompt = VideoAnalysisPrompts.get_tldr_prompt()
+        
+        # Format with variables  
+        formatted_messages = chat_prompt.format(
+            variables={
+                "title": state["video"]["title"],
+                "description": state["video"]["description"] or "",
+                "transcript": state["transcript"]["text"][:8000]  # Truncate for token limits
+            }
+        )
+        
+        # Create structured LLM with Pydantic model
+        gemini_client = GeminiClient()
+        structured_llm = gemini_client.with_structured_output(TLDRResponse)
+        
+        # Track timing and make LLM call
+        start_time = time.time()
+        response: TLDRResponse = await structured_llm.ainvoke(formatted_messages)
+        processing_time = time.time() - start_time
+        
+        # Calculate metrics
+        input_tokens = gemini_client.calculate_tokens(str(formatted_messages))
+        output_tokens = gemini_client.calculate_tokens(response.tldr)
+        cost = gemini_client.calculate_cost(input_tokens, output_tokens)
+        
+        # Update state with structured response
+        state["tldr"] = response.tldr
+        state["key_audience"] = response.key_audience
+        state.setdefault("confidence_scores", {})["tldr"] = response.confidence
+        
+        # Track metrics
+        node_metrics = NodeExecutionMetrics(
+            node_name="extract_tldr",
+            tokens_input=input_tokens,
+            tokens_output=output_tokens,
+            cost_usd=cost,
+            processing_time_seconds=processing_time,
+            confidence_scores={"tldr": response.confidence},
+            status="success",
+            prompt_name="video-tldr-extraction"
+        )
+        
+        # Add to Opik trace context
+        opik.get_current_span().update(
+            metadata={
+                "prompt_name": "video-tldr-extraction", 
+                "confidence": response.confidence,
+                "tokens": input_tokens + output_tokens,
+                "cost_usd": cost
+            },
+            prompts=[chat_prompt]
+        )
+        
+        state.setdefault("metrics", {"nodes": []})["nodes"].append(node_metrics)
+        
+        logger.info(
+            f"TLDR extracted: {input_tokens + output_tokens} tokens, "
+            f"${cost:.4f}, {processing_time:.2f}s, confidence: {response.confidence:.2f}"
+        )
+        
+        return state
+        
+    except Exception as e:
+        logger.error(f"Failed to extract TLDR: {e}")
+        
+        # Track error in metrics
+        error_metrics = NodeExecutionMetrics(
+            node_name="extract_tldr",
+            tokens_input=0,
+            tokens_output=0,
+            cost_usd=0.0,
+            processing_time_seconds=0.0,
+            status="failed",
+            error=str(e),
+            prompt_name="video-tldr-extraction"
+        )
+        
+        state.setdefault("metrics", {"nodes": []})["nodes"].append(error_metrics)
+        state.setdefault("errors", []).append(f"extract_tldr: {e}")
+        
+        raise  # Re-raise to fail the workflow
+
+@track(name="extract_core_topics_node") 
+async def extract_core_topics_node(state: VideoAnalysisState) -> VideoAnalysisState:
+    """Extract core topics using structured output."""
+    
+    logger.info(f"Extracting core topics for video {state['video_id']}")
+    
+    # Similar pattern to extract_tldr_node but with CoreTopicsResponse
+    # ... implementation follows same pattern
+    
+    return state
+
+# ... Additional nodes following same pattern
+```
+
+**Enhanced Node Pattern:**
+1. **Opik Tracking**: `@track` decorator for automatic span creation
+2. **Type Safety**: Use `VideoAnalysisState` TypedDict for state management
+3. **Structured Outputs**: `llm.with_structured_output(PydanticModel)` for reliable parsing
+4. **Prompt Integration**: Use Opik ChatPrompt with automatic versioning
+5. **Comprehensive Metrics**: Track tokens, cost, time, confidence scores
+6. **Error Handling**: Structured error tracking with failed status
+7. **Context Updates**: Add prompts and metadata to Opik spans
+8. **Detailed Logging**: Loguru integration with structured information
+
+#### 3.4 Implement Enhanced LangGraph Workflow ✨ NEW
 **File:** `src/app/agents/video_analyzer/graph.py`
 
-**Workflow Definition:**
+**Enhanced Workflow Definition:**
 ```python
-from langgraph.graph import StateGraph, END
+"""Enhanced video analysis workflow with type safety and Opik integration."""
 
-def create_video_analysis_graph() -> StateGraph:
-    """Create LangGraph workflow for video analysis."""
-    workflow = StateGraph(dict)  # State is a dict
+from langgraph.graph import StateGraph, START, END
+from app.core.opik_manager import opik_manager
+from app.agents.video_analyzer.state import VideoAnalysisState
+from app.agents.video_analyzer.nodes import (
+    load_context_node,
+    extract_tldr_node,
+    extract_core_topics_node,
+    extract_lessons_node,
+    extract_sources_node,
+    extract_concepts_node,
+    extract_people_communities_node,
+    generate_detailed_insights_node,
+    save_results_node
+)
+
+def create_video_analysis_workflow():
+    """Create enhanced video analysis workflow with Opik tracking."""
     
-    # Add nodes
+    # Create workflow with type-safe state
+    workflow = StateGraph(VideoAnalysisState)
+    
+    # Add nodes with enhanced implementations
     workflow.add_node("load_context", load_context_node)
     workflow.add_node("extract_tldr", extract_tldr_node)
     workflow.add_node("extract_core_topics", extract_core_topics_node)
@@ -390,10 +723,10 @@ def create_video_analysis_graph() -> StateGraph:
     workflow.add_node("extract_concepts", extract_concepts_node)
     workflow.add_node("extract_people_communities", extract_people_communities_node)
     workflow.add_node("generate_detailed_insights", generate_detailed_insights_node)
-    workflow.add_node("assemble_metadata", assemble_metadata_node)
+    workflow.add_node("save_results", save_results_node)
     
-    # Define edges (sequential)
-    workflow.set_entry_point("load_context")
+    # Define sequential edges
+    workflow.add_edge(START, "load_context")
     workflow.add_edge("load_context", "extract_tldr")
     workflow.add_edge("extract_tldr", "extract_core_topics")
     workflow.add_edge("extract_core_topics", "extract_lessons")
@@ -401,53 +734,190 @@ def create_video_analysis_graph() -> StateGraph:
     workflow.add_edge("extract_sources", "extract_concepts")
     workflow.add_edge("extract_concepts", "extract_people_communities")
     workflow.add_edge("extract_people_communities", "generate_detailed_insights")
-    workflow.add_edge("generate_detailed_insights", "assemble_metadata")
-    workflow.add_edge("assemble_metadata", END)
+    workflow.add_edge("generate_detailed_insights", "save_results")
+    workflow.add_edge("save_results", END)
     
-    return workflow.compile()
+    # Compile workflow
+    compiled_workflow = workflow.compile()
+    
+    # Wrap with Opik tracking using centralized manager
+    tracked_workflow = opik_manager.track_workflow(
+        compiled_workflow, 
+        workflow_name="video-analysis",
+        tags=["video", "analysis", "gemini-3.0-flash"]
+    )
+    
+    return tracked_workflow
+
+# Factory function for service integration
+def get_video_analysis_workflow():
+    """Get configured video analysis workflow instance."""
+    return create_video_analysis_workflow()
 ```
 
-#### 3.5 Implement Opik Instrumentation
-**File:** `src/app/agents/video_analyzer/opik_instrumentation.py`
+**Key Enhancements:**
+- **Type Safety**: Uses `VideoAnalysisState` TypedDict for compile-time checking
+- **Centralized Opik**: Uses `opik_manager` for consistent configuration
+- **Automatic Tracking**: Workflow wrapped with Opik instrumentation
+- **Clean Separation**: Factory function for easy service integration
+- **Enhanced Tags**: Proper tagging for filtering in Opik UI
 
-**Functions:**
-- `initialize_opik()` - Setup Opik client
-- `instrument_node()` - Decorator/wrapper for node execution tracking
-- `log_llm_call()` - Log individual LLM calls with Opik
+#### 3.5 Centralized Opik Integration (Replaced by App-Level Manager) ✨ UPDATED
 
-**Integration Points:**
-- Wrap each node execution
-- Log each Gemini API call
-- Track workflow-level metrics
+**Note:** Individual workflow instrumentation has been replaced by the centralized `OpikManager` approach.
+
+**Integration Points Now Handled By:**
+- **App-Level Configuration**: `src/app/core/opik_manager.py` 
+- **Node-Level Tracking**: `@track` decorators in each node function
+- **Prompt Management**: Opik ChatPrompt integration in prompts.py
+- **Workflow Wrapping**: `opik_manager.track_workflow()` in graph.py
+
+**Benefits of Centralized Approach:**
+- **Consistent Configuration**: All workflows use same project settings
+- **Reduced Duplication**: No need for per-workflow instrumentation code
+- **Easier Maintenance**: Single place to update Opik configuration
+- **Better Organization**: Clear separation between business logic and observability
 
 ---
 
-### Phase 4: Gemini Client Integration
+### Phase 4: Enhanced Gemini 3.0 Flash Client Integration ✨ NEW
 
-#### 4.1 Create Gemini Client
+#### 4.1 Create Enhanced Gemini Client with Structured Output Support
 **File:** `src/app/client/gemini_client.py`
 
-**Purpose:** Thin client wrapper for Gemini API calls
+**Purpose:** Enhanced client wrapper for Gemini 3.0 Flash with structured output support
 
-**Class:** `GeminiClient`
-**Methods:**
-- `__init__(api_key: str)` - Initialize with API key from settings
-- `generate_content(prompt: str, model: str = "gemini-2.0-flash-exp") -> GeminiResponse`
-- `generate_structured_content(prompt: str, response_schema: dict, model: str) -> dict`
-
-**Response Model:**
+**Complete Implementation:**
 ```python
+"""Enhanced Gemini client with structured output support for 3.0 Flash."""
+
+import google.generativeai as genai
+from pydantic import BaseModel
+from typing import Type, Union, List, Dict, Any
+from app.config.settings import settings
+from app.core.logging import logger
+
 class GeminiResponse(BaseModel):
+    """Standard Gemini API response model."""
     text: str
     tokens_input: int
     tokens_output: int
     model: str
     finish_reason: str
+
+class GeminiClient:
+    """Enhanced Gemini client with structured output support for 3.0 Flash."""
+    
+    def __init__(self, api_key: str = None):
+        self.api_key = api_key or settings.google_api_key
+        genai.configure(api_key=self.api_key)
+        self.model_name = "gemini-3.0-flash"  # Updated to 3.0
+        
+        # Initialize model
+        self.model = genai.GenerativeModel(self.model_name)
+        
+        logger.info(f"Initialized GeminiClient with model: {self.model_name}")
+    
+    def with_structured_output(self, schema: Type[BaseModel]):
+        """Create structured output client for Pydantic model validation."""
+        
+        class StructuredGeminiClient:
+            def __init__(self, client: 'GeminiClient', response_schema: Type[BaseModel]):
+                self.client = client
+                self.response_schema = response_schema
+            
+            async def ainvoke(self, messages: Union[str, List[Dict]]) -> BaseModel:
+                """Generate structured response using Pydantic schema."""
+                
+                # Convert messages to prompt
+                if isinstance(messages, list):
+                    prompt = self._format_chat_messages(messages)
+                else:
+                    prompt = messages
+                
+                # Add schema instruction to prompt
+                schema_instruction = f"""
+                
+                IMPORTANT: Respond with valid JSON that matches this exact schema:
+                {self.response_schema.model_json_schema()}
+                
+                Your response must be valid JSON only, no additional text.
+                """
+                
+                full_prompt = prompt + schema_instruction
+                
+                # Generate response
+                response = await self.client.model.generate_content_async(full_prompt)
+                
+                # Parse and validate with Pydantic
+                try:
+                    response_text = response.text.strip()
+                    if response_text.startswith('```json'):
+                        response_text = response_text.replace('```json', '').replace('```', '').strip()
+                    
+                    return self.response_schema.model_validate_json(response_text)
+                except Exception as e:
+                    logger.error(f"Failed to parse structured response: {e}")
+                    logger.error(f"Raw response: {response.text}")
+                    raise
+            
+            def _format_chat_messages(self, messages: List[Dict]) -> str:
+                """Convert chat messages to single prompt string."""
+                formatted = ""
+                for msg in messages:
+                    role = msg["role"].upper()
+                    content = msg["content"]
+                    formatted += f"{role}: {content}\n\n"
+                return formatted
+        
+        return StructuredGeminiClient(self, schema)
+    
+    async def generate_content(self, prompt: str) -> GeminiResponse:
+        """Generate content with standard response format."""
+        response = await self.model.generate_content_async(prompt)
+        
+        # Calculate approximate tokens (implement properly based on Gemini tokenization)
+        input_tokens = self.calculate_tokens(prompt)
+        output_tokens = self.calculate_tokens(response.text)
+        
+        return GeminiResponse(
+            text=response.text,
+            tokens_input=input_tokens,
+            tokens_output=output_tokens,
+            model=self.model_name,
+            finish_reason=response.finish_reason if hasattr(response, 'finish_reason') else 'stop'
+        )
+    
+    def calculate_tokens(self, text: str) -> int:
+        """Estimate token count (implement proper tokenization for Gemini)."""
+        # Rough approximation: 1 token ≈ 4 characters for most text
+        # TODO: Use proper Gemini tokenization when available
+        return len(text) // 4
+    
+    def calculate_cost(self, input_tokens: int, output_tokens: int) -> float:
+        """Calculate cost based on Gemini 3.0 Flash pricing."""
+        # Updated rates for Gemini 3.0 Flash (update with current pricing)
+        INPUT_PRICE_PER_1K = 0.000075   # Example rate - update with actual
+        OUTPUT_PRICE_PER_1K = 0.0003    # Example rate - update with actual
+        
+        input_cost = (input_tokens / 1000) * INPUT_PRICE_PER_1K
+        output_cost = (output_tokens / 1000) * OUTPUT_PRICE_PER_1K
+        
+        return input_cost + output_cost
+
+# Factory function for dependency injection
+def get_gemini_client() -> GeminiClient:
+    """Get configured Gemini client instance."""
+    return GeminiClient()
 ```
 
-**Cost Calculation:**
-- Use Gemini Flash 3 pricing (store in constants)
-- Calculate cost: `(input_tokens * input_price) + (output_tokens * output_price)`
+**Key Features:**
+- **Structured Output Support**: Direct Pydantic model validation
+- **Async Support**: Full async/await compatibility  
+- **Cost Calculation**: Updated pricing for Gemini 3.0 Flash
+- **Error Handling**: Robust parsing and validation
+- **Chat Message Support**: Convert OpenAI-style messages to Gemini format
+- **Token Estimation**: Approximation with plan for proper tokenization
 
 ---
 
@@ -655,8 +1125,8 @@ opik_api_key: Optional[str] = Field(default=None, alias="OPIK_API_KEY")
 opik_project_name: Optional[str] = Field(default=None, alias="OPIK_PROJECT_NAME")
 opik_workspace: Optional[str] = Field(default=None, alias="OPIK_WORKSPACE")
 
-# Video Analysis Configuration
-analysis_model_name: str = Field(default="gemini-2.0-flash-exp", alias="ANALYSIS_MODEL_NAME")
+# Video Analysis Configuration  
+analysis_model_name: str = Field(default="gemini-3.0-flash", alias="ANALYSIS_MODEL_NAME")  # Updated to 3.0
 analysis_timeout_seconds: int = Field(default=300, alias="ANALYSIS_TIMEOUT_SECONDS")
 ```
 
@@ -671,7 +1141,7 @@ analysis_timeout_seconds: int = Field(default=300, alias="ANALYSIS_TIMEOUT_SECON
 
 **Add (if needed):**
 ```bash
-ANALYSIS_MODEL_NAME=gemini-2.0-flash-exp
+ANALYSIS_MODEL_NAME=gemini-3.0-flash  # Updated to 3.0
 ANALYSIS_TIMEOUT_SECONDS=300
 ```
 
@@ -684,63 +1154,83 @@ ANALYSIS_TIMEOUT_SECONDS=300
 
 **Add Dependencies:**
 ```toml
+# LangGraph and LangChain
 "langgraph>=0.2.0",
 "langchain-core>=0.3.0",  # For LangGraph compatibility
-"google-generativeai>=0.8.0",  # Gemini SDK (or use langchain-google-genai)
+
+# Gemini Integration
+"google-generativeai>=0.8.0",  # Gemini 3.0 Flash SDK
+
+# Opik Observability  
+"opik>=0.2.0",  # For prompt management, tracing, and experiments
+
+# Type Safety
+"typing-extensions>=4.5.0",  # For TypedDict support
 ```
 
-**Note:** Check if `langchain-google-genai` already provides Gemini integration
+**Note:** Verify latest compatible versions during implementation
 
 ---
 
-## Implementation Checklist
+## Implementation Checklist ✨ ENHANCED
 
-### Database & Models
-- [ ] Create migration file for `video_processed_data` schema updates
-- [ ] Create `VideoAnalysis` models (`src/app/models/video_analysis.py`)
-- [ ] Define JSONB field structures
+### Core Infrastructure
+- [ ] **Create centralized Opik manager** (`src/app/core/opik_manager.py`)
+- [ ] **Update settings with Opik configuration** (`src/app/config/settings.py`) 
+- [ ] **Create migration file** for `video_processed_data` schema updates
 
-### LangGraph Agent
-- [ ] Create agent directory structure (`src/app/agents/video_analyzer/`)
-- [ ] Implement prompts (`prompts.py`)
-- [ ] Implement nodes (`nodes.py`)
-- [ ] Create workflow graph (`graph.py`)
-- [ ] Add Opik instrumentation (`opik_instrumentation.py`)
+### Enhanced Data Models
+- [ ] **Create domain-organized models directory** (`src/app/models/video_analysis/`)
+  - [ ] **LLM response schemas** (`schemas.py`) for structured outputs
+  - [ ] **Database entity models** (`responses.py`) for storage
+  - [ ] **Processing metrics models** (`metrics.py`) for tracking
+- [ ] **Update existing models** to use new namespace
 
-### Client Layer
-- [ ] Create `GeminiClient` (`src/app/client/gemini_client.py`)
-- [ ] Implement cost calculation logic
-- [ ] Add structured output support
+### Gemini 3.0 Flash Client
+- [ ] **Create enhanced Gemini client** (`src/app/client/gemini_client.py`)
+- [ ] **Implement structured output support** with Pydantic validation
+- [ ] **Add cost calculation** for Gemini 3.0 Flash pricing
+- [ ] **Add token estimation** and proper error handling
+
+### LangGraph Agent with Enhanced Features
+- [ ] **Create enhanced agent directory** (`src/app/agents/video_analyzer/`)
+  - [ ] **Type-safe state definition** (`state.py`) with TypedDict
+  - [ ] **Opik ChatPrompt integration** (`prompts.py`) with versioning
+  - [ ] **Enhanced nodes** (`nodes.py`) with `@track` decorators and structured outputs
+  - [ ] **Enhanced workflow** (`graph.py`) with centralized Opik tracking
+- [ ] **Implement complete TLDR node** as template for other nodes
+- [ ] **Add comprehensive error handling** and metrics tracking
 
 ### Repository Layer
-- [ ] Create `VideoAnalysisRepository` (`src/app/repositories/video_analysis_repository.py`)
-- [ ] Implement save/retrieve methods
-- [ ] Handle JSONB serialization
+- [ ] **Create VideoAnalysisRepository** (`src/app/repositories/video_analysis_repository.py`)
+- [ ] **Implement save/retrieve methods** with proper JSONB handling
+- [ ] **Add upsert patterns** for idempotent operations
 
-### Service Layer
-- [ ] Create `VideoAnalysisService` (`src/app/services/video_analysis_service.py`)
-- [ ] Integrate LangGraph workflow
-- [ ] Add error handling
+### Service Layer  
+- [ ] **Create VideoAnalysisService** (`src/app/services/video_analysis_service.py`)
+- [ ] **Integrate enhanced LangGraph workflow** with proper error handling
+- [ ] **Add comprehensive logging** and metrics collection
 
 ### Orchestrator Integration
-- [ ] Update `_process_videos()` method in `ContentOrchestrator`
-- [ ] Filter videos with transcripts
-- [ ] Call `VideoAnalysisService`
-- [ ] Update status tracking
+- [ ] **Update ContentOrchestrator** `_process_videos()` method
+- [ ] **Add VideoAnalysisService integration** with proper filtering
+- [ ] **Update status tracking** and error handling
 
 ### API Layer
-- [ ] Add `/process-video/{video_id}` endpoint
-- [ ] Add `/process-video/{video_id}/async` endpoint
-- [ ] Create response models
+- [ ] **Add single video processing endpoints** in `src/app/api/orchestrator.py`
+- [ ] **Create enhanced response models** with detailed metrics
+- [ ] **Add async processing support** with proper error handling
 
-### Configuration
-- [ ] Update `Settings` class with Gemini and Opik config
-- [ ] Update `.env.example` (already done)
-- [ ] Add analysis configuration options
+### Configuration & Dependencies
+- [ ] **Update pyproject.toml** with enhanced dependencies (LangGraph, Opik, typing-extensions)
+- [ ] **Update .env.example** with Gemini 3.0 and Opik configuration
+- [ ] **Verify dependency compatibility** and version constraints
 
-### Dependencies
-- [ ] Update `pyproject.toml` with LangGraph dependencies
-- [ ] Verify Gemini SDK availability
+### Testing & Validation
+- [ ] **Create basic integration test** for complete workflow
+- [ ] **Test structured output validation** with sample data
+- [ ] **Verify Opik integration** and trace visibility
+- [ ] **Test cost calculation accuracy** with actual API calls
 
 ---
 
@@ -751,15 +1241,15 @@ ANALYSIS_TIMEOUT_SECONDS=300
 - **Rationale**: Simplifies error handling, cost tracking, and debugging
 - **Future**: Can add parallelization later if needed
 
-### 2. Prompt Storage
-- **Decision**: Store prompts in `prompts.py` file
-- **Rationale**: Simple for v1, easy to version control
-- **Future**: Can migrate to Opik prompt versioning
+### 2. Prompt Management ✨ UPDATED
+- **Decision**: Use Opik ChatPrompt for centralized management
+- **Rationale**: Automatic versioning, team collaboration, experiment linking
+- **Implementation**: ChatPrompt classes with structured output schema binding
 
 ### 3. Cost Tracking
 - **Decision**: Track per-node and aggregate metrics
 - **Storage**: Per-node in `processing_metadata`, aggregate in dedicated columns
-- **Calculation**: Based on Gemini Flash 3 pricing
+- **Calculation**: Based on Gemini 3.0 Flash pricing
 
 ### 4. Error Handling
 - **Decision**: Fail-fast (if any node fails, entire workflow fails)
@@ -826,32 +1316,37 @@ ANALYSIS_TIMEOUT_SECONDS=300
 
 ## File Path Summary
 
-### New Files
+### New Files ✨ UPDATED
 ```
+src/app/core/
+  opik_manager.py  # NEW: Centralized Opik management
+
 src/app/agents/
   __init__.py
   video_analyzer/
     __init__.py
-    graph.py
-    nodes.py
-    prompts.py
-    models.py
-    opik_instrumentation.py
+    graph.py       # Enhanced with type safety and centralized Opik
+    nodes.py       # Enhanced with structured outputs and @track decorators
+    prompts.py     # Enhanced with Opik ChatPrompt integration
+    state.py       # NEW: Type-safe state definition with TypedDict
 
 src/app/client/
-  gemini_client.py
+  gemini_client.py  # Enhanced with structured output support for 3.0 Flash
 
-src/app/models/
-  video_analysis.py
+src/app/models/video_analysis/  # NEW: Domain-organized structure
+  __init__.py
+  schemas.py      # NEW: LLM response schemas for structured outputs
+  responses.py    # NEW: Database entity models  
+  metrics.py      # NEW: Processing metrics models
 
 src/app/repositories/
-  video_analysis_repository.py
+  video_analysis_repository.py  # Enhanced with proper JSONB handling
 
 src/app/services/
-  video_analysis_service.py
+  video_analysis_service.py  # Enhanced with comprehensive error handling
 
 supabase/migrations/
-  YYYYMMDDHHMMSS_video_analysis_schema.sql
+  YYYYMMDDHHMMSS_video_analysis_schema.sql  # Enhanced with new fields
 ```
 
 ### Modified Files
@@ -865,5 +1360,35 @@ pyproject.toml                    # Add LangGraph dependencies
 
 ---
 
-This implementation plan provides a comprehensive roadmap for building Phase 3 video analysis with LangGraph, Gemini Flash 3, and Opik observability, following the established architectural patterns and design principles of the LTAI News project.
+## Summary ✨ ENHANCED
+
+This **enhanced implementation plan** provides a comprehensive roadmap for building Phase 3 video analysis with:
+
+### 🚀 **Core Technologies**
+- **LangGraph**: Sequential workflow with type-safe state management
+- **Gemini 3.0 Flash**: Latest model with enhanced structured output capabilities
+- **Opik**: Comprehensive observability with centralized configuration, prompt management, and experiment tracking
+- **Pydantic**: Robust data validation and structured outputs
+
+### 🎯 **Key Improvements Over Original Plan**
+1. **Structured Outputs**: Direct Pydantic model validation eliminates JSON parsing errors
+2. **Centralized Opik Management**: App-level configuration reduces duplication and improves maintainability  
+3. **Enhanced Data Models**: Clean separation between LLM schemas and database entities
+4. **Type Safety**: TypedDict state management provides compile-time checking
+5. **Comprehensive Examples**: Complete node implementation as template for development
+
+### 🛠 **Implementation Benefits**
+- **Reliability**: Structured outputs and proper error handling
+- **Observability**: Rich Opik integration with prompt versioning and experiment linking
+- **Maintainability**: Centralized configuration and clean architecture
+- **Scalability**: App-level design supports multiple workflows and agents
+- **Team Collaboration**: Shared prompts and experiments through Opik platform
+
+### 📊 **Expected Outcomes**
+- **High-Quality Extractions**: Structured outputs ensure consistent, valid responses
+- **Rich Observability**: Complete visibility into workflow execution and performance
+- **Cost Optimization**: Accurate tracking enables optimization opportunities  
+- **Team Efficiency**: Centralized prompt management and experiment tracking
+
+This implementation follows established architectural patterns while introducing modern best practices for LLM application development, observability, and team collaboration.
 
