@@ -77,32 +77,18 @@ This document outlines the implementation of **Phase 3: Video Processing** using
 
 ## Architecture & Design Decisions
 
-### 1. LangGraph Workflow Structure
+### 1. LangGraph Workflow Structure ✨ UPDATED
 
-**File:** `src/app/agents/video_analyzer/graph.py`
+**File:** `src/app/agents/video_analyzer.py` (single file)
 
-Sequential workflow with the following nodes:
+**Simplified workflow with single master extraction:**
 
 ```
 START
   ↓
 [Load Context] → Fetch video metadata + transcript + channel info
   ↓
-[Extract TLDR] → Generate concise summary (1-2 paragraphs)
-  ↓
-[Extract Core Topics] → Identify main topics, categorize them
-  ↓
-[Extract Lessons] → Bucket lessons by category (technical, business, etc.)
-  ↓
-[Extract Sources] → Papers, books, podcasts, links mentioned
-  ↓
-[Extract Concepts] → Key ideas and concepts discussed
-  ↓
-[Extract People & Communities] → Names, roles, discords, events
-  ↓
-[Generate Detailed Insights] → Extended analysis section
-  ↓
-[Assemble Metadata] → Preserve all video metadata
+[Master Extraction] → Single comprehensive prompt extracts all data at once
   ↓
 [Save Results] → Store complete analysis to database
   ↓
@@ -110,10 +96,17 @@ END
 ```
 
 **Key Design Principles:**
-- **Sequential Processing**: No parallel nodes (simplifies error handling and cost tracking)
-- **State Management**: Each node receives and returns state dict with video context + extracted data
-- **Error Handling**: If any node fails, entire workflow fails (can be enhanced later for partial results)
+- **Cost-Optimized**: Single API call instead of 8 (1 vs 8 = 87.5% cost reduction)
+- **Comprehensive Extraction**: One master prompt with structured output for all fields
+- **Future-Ready**: Infrastructure supports multiple nodes for case studies later
+- **State Management**: Simple state dict with video context + extracted data
+- **Error Handling**: Single point of failure, easier debugging
 - **Idempotency**: Workflow can be re-run safely (upsert pattern in repository)
+
+**Future Enhancement Path:**
+- Easy to split into individual nodes for prompt comparison studies
+- Token tracking infrastructure ready for per-section analysis
+- Opik integration supports both single and multi-node approaches
 
 ### 2. Enhanced Prompt Management with Opik ✨ NEW
 
@@ -131,45 +124,62 @@ END
 **Structure:**
 ```python
 import opik
-from app.models.video_analysis.schemas import TLDRResponse, CoreTopicsResponse
+from app.models.video_analysis import VideoAnalysisResponse  # Simplified import
 
 class VideoAnalysisPrompts:
     """Centralized prompt management using Opik ChatPrompt system."""
     
     @staticmethod
-    def get_tldr_prompt() -> opik.ChatPrompt:
-        """Get TLDR extraction chat prompt with structured output schema."""
+    def get_master_extraction_prompt() -> opik.ChatPrompt:
+        """Get comprehensive analysis prompt with structured output schema."""
         messages = [
             {
                 "role": "system", 
-                "content": "You are an expert at creating concise, informative summaries of technical videos."
+                "content": """You are an expert at analyzing technical videos and extracting comprehensive insights.
+                
+                Your task is to analyze the video content and extract ALL the following information in a single structured response:
+                - TLDR summary (1-2 paragraphs)
+                - Core topics and their categories
+                - Lessons learned (technical, business, general)
+                - Sources referenced (papers, books, podcasts, links)
+                - Key concepts mentioned
+                - People and communities mentioned
+                - Overall insights and analysis"""
             },
             {
                 "role": "user",
                 "content": """
                 VIDEO TITLE: {{title}}
                 VIDEO DESCRIPTION: {{description}}
+                CHANNEL: {{channel_name}}
+                VIDEO URL: {{url}}
+                PUBLISHED AT: {{published_at}}
+                RAW METADATA: {{raw_metadata}}
                 TRANSCRIPT: {{transcript}}
                 
-                Create a 1-2 paragraph TLDR that captures:
-                1. The main purpose/goal of the video
-                2. The key insights or learnings  
-                3. Who would benefit from watching this
-                
-                Make it engaging and informative for busy professionals.
-                
-                Also provide a confidence score (0.0-1.0) for your analysis quality.
+                Analyze this video comprehensively and extract:
+
+                1. TLDR: Create a 1-2 paragraph summary capturing the main purpose, key insights, and target audience
+                2. CORE TOPICS: Identify 3-7 main topics with categories (technical/business/philosophy/general) and importance levels
+                3. LESSONS LEARNED: Extract actionable lessons organized by category (technical/business/general)
+                4. SOURCES: Identify any papers, books, podcasts, links, or external references mentioned
+                5. CONCEPTS: Extract key concepts, frameworks, or ideas discussed
+                6. PEOPLE & COMMUNITIES: Note any people, organizations, communities, events, or Discord servers mentioned
+                7. INSIGHTS: Provide detailed analysis of the video's value and implications
+
+                Provide confidence scores (0.0-1.0) for each extraction category.
                 """
             }
         ]
         
         return opik.ChatPrompt(
-            name="video-tldr-extraction",
+            name="video-master-extraction",
             messages=messages,
             metadata={
                 "category": "video-analysis",
-                "output_schema": "TLDRResponse",
-                "version": "1.0"
+                "output_schema": "VideoAnalysisResponse",
+                "version": "1.0",
+                "extraction_type": "comprehensive"
             }
         )
 ```
@@ -195,10 +205,12 @@ class VideoAnalysisPrompts:
 **Database Fields:**
 ```sql
 -- Add to video_processed_data table
+ALTER TABLE video_processed_data ADD COLUMN IF NOT EXISTS input_tokens INTEGER;   -- Track input tokens
+ALTER TABLE video_processed_data ADD COLUMN IF NOT EXISTS output_tokens INTEGER;  -- Track output tokens  
 ALTER TABLE video_processed_data ADD COLUMN IF NOT EXISTS total_tokens INTEGER;
 ALTER TABLE video_processed_data ADD COLUMN IF NOT EXISTS total_cost DECIMAL(10, 6);
 ALTER TABLE video_processed_data ADD COLUMN IF NOT EXISTS total_processing_time_seconds DECIMAL(10, 3);
-ALTER TABLE video_processed_data ADD COLUMN IF NOT EXISTS processing_metadata JSONB;  -- Per-node details
+ALTER TABLE video_processed_data ADD COLUMN IF NOT EXISTS processing_metadata JSONB;  -- Per-node details (future case studies)
 ```
 
 **Processing Metadata Structure:**
@@ -334,55 +346,35 @@ ALTER TABLE video_processed_data ADD COLUMN IF NOT EXISTS total_processing_time_
 
 ---
 
-### Phase 2: Enhanced Data Models ✨ NEW
+### Phase 2: Simplified Data Models ✨ UPDATED
 
-#### 2.1 Create Domain-Organized Video Analysis Models
+#### 2.1 Create Single Video Analysis Model File
 
-**Directory Structure:**
+**Simplified Structure (matching current patterns):**
 ```
-src/app/models/video_analysis/
-├── __init__.py
-├── schemas.py      # LLM response schemas for structured outputs
-├── responses.py    # Complete database entity models  
-└── metrics.py      # Processing metrics models
+src/app/models/
+├── video_analysis.py  # Single file with all models (matches existing pattern)
 ```
 
-#### 2.1.1 LLM Response Schemas
-**File:** `src/app/models/video_analysis/schemas.py`
+#### 2.1.1 Complete Video Analysis Models
+**File:** `src/app/models/video_analysis.py`
 
-**Purpose:** Clean Pydantic models for `llm.with_structured_output()` validation
+**Purpose:** All video analysis models in single file (matches current codebase pattern)
 
 ```python
-"""LLM Response schemas for structured outputs - used with llm.with_structured_output()."""
+"""Video analysis models for comprehensive extraction and database storage."""
 
-from pydantic import BaseModel, Field
-from typing import List, Literal, Optional
+from pydantic import BaseModel, Field, ConfigDict
+from typing import List, Dict, Optional, Any, Literal
 from datetime import datetime
 
-class TLDRResponse(BaseModel):
-    """Structured response for TLDR extraction."""
-    tldr: str = Field(description="1-2 paragraph summary of the video")
-    confidence: float = Field(ge=0.0, le=1.0, description="Confidence in analysis quality")
-    key_audience: str = Field(description="Who would benefit most from this content")
+# === LLM Response Model (for structured output) ===
 
 class CoreTopic(BaseModel):
     """Individual topic with metadata."""
     topic: str = Field(description="Clear, specific topic name")
     category: Literal["technical", "business", "philosophy", "general"] = Field(description="Topic category")
     importance: Literal["high", "medium", "low"] = Field(description="Relative importance")
-    confidence: float = Field(ge=0.0, le=1.0, description="Extraction confidence")
-
-class CoreTopicsResponse(BaseModel):
-    """Structured response for core topics extraction."""
-    topics: List[CoreTopic] = Field(description="3-7 core topics identified")
-    reasoning: str = Field(description="Brief explanation of categorization approach")
-
-class LessonsLearnedResponse(BaseModel):
-    """Structured response for lessons extraction."""
-    technical_lessons: List[str] = Field(description="Technical insights and learnings")
-    business_lessons: List[str] = Field(description="Business strategy and insights")
-    general_lessons: List[str] = Field(description="General life/career insights")
-    confidence: float = Field(ge=0.0, le=1.0, description="Overall extraction confidence")
 
 class SourceReference(BaseModel):
     """Individual source reference."""
@@ -390,54 +382,78 @@ class SourceReference(BaseModel):
     title: str = Field(description="Source title or name")
     url: Optional[str] = Field(None, description="URL if available")
     author: Optional[str] = Field(None, description="Author or creator")
-    confidence: float = Field(ge=0.0, le=1.0, description="Extraction confidence")
 
-class SourcesResponse(BaseModel):
-    """Structured response for sources extraction."""
-    sources: List[SourceReference] = Field(description="Sources, papers, books, links mentioned")
-    reasoning: str = Field(description="Brief explanation of source identification")
+class ConceptMention(BaseModel):
+    """Key concept or framework mentioned."""
+    concept: str = Field(description="Concept or framework name")
+    description: str = Field(description="Brief description of the concept")
+    relevance: str = Field(description="Why this concept is relevant to the video")
 
-# ... Additional response schemas for other nodes
-```
+class PersonMention(BaseModel):
+    """Person mentioned in the video."""
+    name: str = Field(description="Person's name")
+    role: Optional[str] = Field(None, description="Their role or title")
+    affiliation: Optional[str] = Field(None, description="Organization or company")
 
-#### 2.1.2 Database Entity Models
-**File:** `src/app/models/video_analysis/responses.py`
+class CommunityMention(BaseModel):
+    """Community, event, or organization mentioned."""
+    name: str = Field(description="Community or organization name")
+    type: Literal["discord", "community", "event", "organization"] = Field(description="Type of mention")
+    url: Optional[str] = Field(None, description="URL if available")
 
-**Purpose:** Complete analysis results for database storage
+class VideoAnalysisResponse(BaseModel):
+    """Master structured response for comprehensive video analysis."""
+    
+    # Core analysis components
+    tldr: str = Field(description="1-2 paragraph summary of the video")
+    key_audience: str = Field(description="Who would benefit most from this content")
+    
+    # Structured extractions
+    core_topics: List[CoreTopic] = Field(description="3-7 main topics identified")
+    lessons_learned: Dict[str, List[str]] = Field(description="Lessons organized by category (technical/business/general)")
+    sources_referenced: List[SourceReference] = Field(description="External sources mentioned")
+    concepts_mentioned: List[ConceptMention] = Field(description="Key concepts and frameworks")
+    people_mentioned: List[PersonMention] = Field(description="People referenced in the video")
+    communities_mentioned: List[CommunityMention] = Field(description="Communities, events, organizations")
+    
+    # Analysis and insights
+    detailed_insights: str = Field(description="Extended analysis and implications")
+    
+    # Confidence tracking
+    confidence_scores: Dict[str, float] = Field(description="Confidence per extraction category (0.0-1.0)")
 
-```python
-"""Complete analysis responses - these are stored in database."""
-
-from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Dict, Optional, Any
-from datetime import datetime
-from .schemas import CoreTopic, SourceReference
-from .metrics import ProcessingMetadata
+# === Database Storage Model ===
 
 class VideoAnalysisComplete(BaseModel):
-    """Complete video analysis result - this goes to database."""
+    """Complete video analysis result for database storage."""
+    
     video_id: str
     
     # Analysis results (from LLM structured outputs)
     tldr: str
     key_audience: str
-    core_topics: List[CoreTopic]
-    lessons_learned: Dict[str, List[str]]  # Category -> list of lessons
+    core_topics: List[Dict[str, Any]]  # Serialized CoreTopic objects
+    lessons_learned: Dict[str, List[str]]
     detailed_insights: str
-    sources_referenced: List[SourceReference]
-    concepts_mentioned: List[Dict[str, Any]]
-    people_mentioned: List[Dict[str, str]]
-    communities_mentioned: List[Dict[str, str]]
+    sources_referenced: List[Dict[str, Any]]  # Serialized SourceReference objects
+    concepts_mentioned: List[Dict[str, Any]]  # Serialized ConceptMention objects
+    people_mentioned: List[Dict[str, Any]]  # Serialized PersonMention objects
+    communities_mentioned: List[Dict[str, Any]]  # Serialized CommunityMention objects
     metadata_extracted: Dict[str, Any]  # Full video/channel metadata
     
-    # Processing metadata
+    # Processing tracking
+    input_tokens: int  # Track input tokens separately
+    output_tokens: int  # Track output tokens separately
     total_tokens: int
     total_cost: float
     total_processing_time_seconds: float
-    processing_metadata: ProcessingMetadata
+    confidence_scores: Dict[str, float]
+    
+    # Processing metadata (for future case studies)
+    processing_metadata: Optional[Dict[str, Any]] = Field(None, description="Detailed processing info for case studies")
     
     # Model and timing info
-    model_name: str = "gemini-3.0-flash"  # Updated to 3.0
+    model_name: str = "gemini-3.0-flash"
     processed_at: datetime = Field(default_factory=datetime.utcnow)
     
     model_config = ConfigDict(
@@ -445,67 +461,52 @@ class VideoAnalysisComplete(BaseModel):
             datetime: lambda v: v.isoformat()
         }
     )
-```
 
-#### 2.1.3 Processing Metrics Models  
-**File:** `src/app/models/video_analysis/metrics.py`
+# === Processing Metrics (for case studies) ===
 
-```python
-"""Processing and performance tracking models."""
-
-from pydantic import BaseModel, Field
-from typing import List, Dict, Optional
-from datetime import datetime
-
-class NodeExecutionMetrics(BaseModel):
-    """Metrics for individual node execution."""
-    node_name: str
-    tokens_input: int
-    tokens_output: int
-    cost_usd: float
-    processing_time_seconds: float
-    confidence_scores: Dict[str, float] = Field(default_factory=dict)
-    status: str  # "success", "failed"
-    error: Optional[str] = None
-    prompt_name: Optional[str] = None  # Opik prompt name used
-
-class ProcessingMetadata(BaseModel):
-    """Complete processing metadata for workflow execution."""
-    nodes: List[NodeExecutionMetrics]
+class ProcessingMetrics(BaseModel):
+    """Processing metrics for workflow execution tracking."""
+    
     workflow_version: str = "1.0"
+    extraction_method: str = "single-master-prompt"  # vs "multi-node" for future comparisons
     opik_trace_id: Optional[str] = None
     opik_experiment_id: Optional[str] = None
     started_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: Optional[datetime] = None
     
-    @property
-    def total_processing_time(self) -> float:
-        """Calculate total processing time across all nodes."""
-        return sum(node.processing_time_seconds for node in self.nodes)
+    # Token and cost breakdown
+    input_tokens: int
+    output_tokens: int
+    total_cost: float
+    processing_time_seconds: float
     
-    @property
-    def total_cost(self) -> float:
-        """Calculate total cost across all nodes.""" 
-        return sum(node.cost_usd for node in self.nodes)
-    
-    @property
-    def total_tokens(self) -> int:
-        """Calculate total tokens across all nodes."""
-        return sum(node.tokens_input + node.tokens_output for node in self.nodes)
+    # Quality metrics
+    confidence_scores: Dict[str, float]
+    extraction_completeness: Dict[str, bool]  # Track which sections were successfully extracted
+```
+
+**Key Simplifications:**
+- **Single file**: Matches your current `models/video.py` pattern
+- **Flat structure**: No nested directories
+- **Master extraction**: One comprehensive model instead of multiple response types
+- **Token tracking**: Separate input/output token fields for analysis
+- **Future-ready**: Infrastructure supports case study comparisons later
+
+**Note on Schema Evolution:**
+```python
+# Future enhancement: Easy to add new fields without breaking existing data
+# Example: Add sentiment analysis later
+# sentiment_analysis: Optional[Dict[str, Any]] = Field(None, description="Sentiment metrics (future)")
 ```
 
 ---
 
 ### Phase 3: LangGraph Agent Implementation
 
-#### 3.1 Create Enhanced Agent Directory Structure
-**Files:**
+#### 3.1 Create Simplified Agent Structure ✨ UPDATED
+**Files (simplified to match your preferences):**
 - `src/app/agents/__init__.py`
-- `src/app/agents/video_analyzer/__init__.py`
-- `src/app/agents/video_analyzer/graph.py` - Main workflow definition with type safety
-- `src/app/agents/video_analyzer/nodes.py` - Individual node implementations with structured outputs
-- `src/app/agents/video_analyzer/prompts.py` - Opik ChatPrompt management
-- `src/app/agents/video_analyzer/state.py` - TypedDict state definition
+- `src/app/agents/video_analyzer.py` - Single file with complete workflow, prompts, and nodes
 - `src/app/core/opik_manager.py` - Centralized Opik management
 
 #### 3.2 Implement Type-Safe State Management ✨ NEW
@@ -1147,28 +1148,34 @@ ANALYSIS_TIMEOUT_SECONDS=300
 
 ---
 
-### Phase 10: Dependencies
+### Phase 10: Dependencies ✨ UPDATED
 
-#### 10.1 Update pyproject.toml
-**File:** `pyproject.toml`
+#### 10.1 Required Dependencies to Add
 
-**Add Dependencies:**
+**Add these to your `pyproject.toml` dependencies array:**
+
 ```toml
-# LangGraph and LangChain
-"langgraph>=0.2.0",
-"langchain-core>=0.3.0",  # For LangGraph compatibility
+# LangGraph and LangChain (for workflow orchestration)
+"langgraph",              # Latest stable version - for workflow management
+"langchain-core",         # Required for LangGraph compatibility
 
-# Gemini Integration
-"google-generativeai>=0.8.0",  # Gemini 3.0 Flash SDK
+# Gemini Integration (for LLM API)
+"google-generativeai",    # Latest version - Gemini 3.0 Flash SDK
 
-# Opik Observability  
-"opik>=0.2.0",  # For prompt management, tracing, and experiments
+# Opik (for observability and prompt management)  
+"opik",                   # Latest version - for tracing and prompt versioning
 
-# Type Safety
-"typing-extensions>=4.5.0",  # For TypedDict support
+# Type Safety (for TypedDict support)
+"typing-extensions",      # Latest version - for enhanced type safety
 ```
 
-**Note:** Verify latest compatible versions during implementation
+**Installation command:**
+```bash
+# Add to your existing dependencies and run:
+pip install langgraph langchain-core google-generativeai opik typing-extensions
+```
+
+**Note:** Use latest stable versions during implementation - the plan avoids pinning specific versions to prevent conflicts with your existing dependencies.
 
 ---
 
@@ -1222,24 +1229,18 @@ ANALYSIS_TIMEOUT_SECONDS=300
 - [ ] **Add async processing support** with proper error handling
 
 ### Configuration & Dependencies
-- [ ] **Update pyproject.toml** with enhanced dependencies (LangGraph, Opik, typing-extensions)
+- [ ] **Add required dependencies** to pyproject.toml (LangGraph, Opik, google-generativeai, typing-extensions)
 - [ ] **Update .env.example** with Gemini 3.0 and Opik configuration
 - [ ] **Verify dependency compatibility** and version constraints
-
-### Testing & Validation
-- [ ] **Create basic integration test** for complete workflow
-- [ ] **Test structured output validation** with sample data
-- [ ] **Verify Opik integration** and trace visibility
-- [ ] **Test cost calculation accuracy** with actual API calls
 
 ---
 
 ## Key Design Decisions Summary
 
-### 1. Sequential Processing
-- **Decision**: No parallel node execution
-- **Rationale**: Simplifies error handling, cost tracking, and debugging
-- **Future**: Can add parallelization later if needed
+### 1. Master Prompt Approach ✨ UPDATED
+- **Decision**: Single comprehensive extraction instead of sequential nodes
+- **Rationale**: 87.5% cost reduction (1 API call vs 8), faster execution, simpler debugging
+- **Future**: Can split into individual nodes for prompt comparison case studies later
 
 ### 2. Prompt Management ✨ UPDATED
 - **Decision**: Use Opik ChatPrompt for centralized management
@@ -1316,28 +1317,20 @@ ANALYSIS_TIMEOUT_SECONDS=300
 
 ## File Path Summary
 
-### New Files ✨ UPDATED
+### New Files ✨ UPDATED (Simplified Structure)
 ```
 src/app/core/
   opik_manager.py  # NEW: Centralized Opik management
 
 src/app/agents/
   __init__.py
-  video_analyzer/
-    __init__.py
-    graph.py       # Enhanced with type safety and centralized Opik
-    nodes.py       # Enhanced with structured outputs and @track decorators
-    prompts.py     # Enhanced with Opik ChatPrompt integration
-    state.py       # NEW: Type-safe state definition with TypedDict
+  video_analyzer.py  # NEW: Single file with complete workflow (matches your pattern)
 
 src/app/client/
   gemini_client.py  # Enhanced with structured output support for 3.0 Flash
 
-src/app/models/video_analysis/  # NEW: Domain-organized structure
-  __init__.py
-  schemas.py      # NEW: LLM response schemas for structured outputs
-  responses.py    # NEW: Database entity models  
-  metrics.py      # NEW: Processing metrics models
+src/app/models/
+  video_analysis.py  # NEW: All models in single file (matches current pattern)
 
 src/app/repositories/
   video_analysis_repository.py  # Enhanced with proper JSONB handling
@@ -1346,7 +1339,7 @@ src/app/services/
   video_analysis_service.py  # Enhanced with comprehensive error handling
 
 supabase/migrations/
-  YYYYMMDDHHMMSS_video_analysis_schema.sql  # Enhanced with new fields
+  YYYYMMDDHHMMSS_video_analysis_schema.sql  # Enhanced with input/output token tracking
 ```
 
 ### Modified Files
@@ -1354,8 +1347,7 @@ supabase/migrations/
 src/app/services/orchestrator.py  # Update _process_videos()
 src/app/api/orchestrator.py       # Add single video endpoints
 src/app/config/settings.py        # Add Gemini/Opik config
-.env.example                      # Add GOOGLE_API_KEY
-pyproject.toml                    # Add LangGraph dependencies
+.env.example                      # Add GOOGLE_API_KEY, OPIK_* config
 ```
 
 ---
@@ -1371,11 +1363,12 @@ This **enhanced implementation plan** provides a comprehensive roadmap for build
 - **Pydantic**: Robust data validation and structured outputs
 
 ### 🎯 **Key Improvements Over Original Plan**
-1. **Structured Outputs**: Direct Pydantic model validation eliminates JSON parsing errors
-2. **Centralized Opik Management**: App-level configuration reduces duplication and improves maintainability  
-3. **Enhanced Data Models**: Clean separation between LLM schemas and database entities
-4. **Type Safety**: TypedDict state management provides compile-time checking
-5. **Comprehensive Examples**: Complete node implementation as template for development
+1. **Master Prompt Approach**: 87.5% cost reduction with single API call vs 8 sequential calls
+2. **Simplified Architecture**: Single-file approach matching existing codebase patterns
+3. **Token Tracking**: Separate input/output token fields for detailed cost analysis
+4. **Future-Ready Infrastructure**: Easy to split into multi-node for case studies later
+5. **Structured Outputs**: Direct Pydantic model validation eliminates JSON parsing errors
+6. **Centralized Opik Management**: App-level configuration reduces duplication
 
 ### 🛠 **Implementation Benefits**
 - **Reliability**: Structured outputs and proper error handling
