@@ -1,10 +1,12 @@
 """Application settings and configuration."""
 
 import os
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 
 from pydantic import BaseModel, Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.core.logging import logger
 
 
 def parse_tracked_channels(value: Any) -> List[str]:
@@ -41,16 +43,10 @@ class Settings(BaseSettings):
         description="Number of hours to look back for content (1-168 hours)",
         alias="CONTENT_LOOKBACK_HOURS",
     )
-    min_video_duration_minutes: int = Field(
-        default=4,
-        ge=0,
-        description="Minimum video duration in minutes to be collected",
-        alias="MIN_VIDEO_DURATION_MINUTES",
-    )
-    bypass_duration_channels_raw: Optional[str] = Field(
+    channel_duration_thresholds_raw: Optional[str] = Field(
         default=None,
-        alias="BYPASS_DURATION_CHANNELS",
-        description="Comma-separated list of channel names/handles to bypass duration limits",
+        alias="CHANNEL_DURATION_THRESHOLDS",
+        description="Comma-separated list of channel:minutes pairs (e.g., @stripe:20,@AlexHormozi:5)",
         exclude=True,
     )
     bypass_lookback_channels_raw: Optional[str] = Field(
@@ -146,11 +142,25 @@ class Settings(BaseSettings):
 
     @computed_field
     @property
-    def bypass_duration_channels(self) -> List[str]:
-        """Parse BYPASS_DURATION_CHANNELS from comma-separated string."""
-        if self.bypass_duration_channels_raw is None or not self.bypass_duration_channels_raw.strip():
-            return []
-        return [ch.strip() for ch in self.bypass_duration_channels_raw.split(",") if ch.strip()]
+    def channel_duration_thresholds(self) -> Dict[str, int]:
+        """Parse CHANNEL_DURATION_THRESHOLDS into a dictionary mapping channel names to minutes."""
+        if self.channel_duration_thresholds_raw is None or not self.channel_duration_thresholds_raw.strip():
+            return {}
+        
+        thresholds = {}
+        for pair in self.channel_duration_thresholds_raw.split(","):
+            pair = pair.strip()
+            if ":" in pair:
+                channel, minutes_str = pair.rsplit(":", 1)
+                channel = channel.strip()
+                try:
+                    minutes = int(minutes_str.strip())
+                    if minutes >= 0:  # Validate non-negative
+                        thresholds[channel.lower()] = minutes
+                except ValueError:
+                    logger.warning(f"Invalid threshold value '{minutes_str}' for channel '{channel}', skipping")
+        
+        return thresholds
 
     @computed_field
     @property

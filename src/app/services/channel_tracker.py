@@ -180,47 +180,46 @@ class ChannelTracker:
         return channel
 
     def fetch_recent_videos(
-        self, channel_id: str, hours: Optional[int] = None, bypass_duration: bool = False
+        self, channel: Channel, hours: Optional[int] = None
     ) -> List[Video]:
         """
         Fetch recent videos from a channel.
 
         Args:
-            channel_id: YouTube channel ID
+            channel: Channel object
             hours: Number of hours to look back (defaults to settings value)
-            bypass_duration: If True, skips the minimum duration filter
 
         Returns:
             List of Video objects
         """
         lookback_hours = hours or self.settings.content_lookback_hours
         logger.debug(
-            f"Fetching recent videos for channel {channel_id} "
-            f"(last {lookback_hours} hours, bypass_duration={bypass_duration})"
+            f"Fetching recent videos for channel {channel.name} ({channel.id}) "
+            f"(last {lookback_hours} hours)"
         )
 
         # Get videos with metadata
         videos_data = self.youtube_client.get_recent_videos_with_metadata(
-            channel_id, hours=lookback_hours
+            channel.id, hours=lookback_hours
         )
 
         # Convert to Video objects
         videos = []
-        min_duration_secs = self.settings.min_video_duration_minutes * 60
+        min_duration_secs = self.get_min_duration_for_channel(channel)
         
         for video_data in videos_data:
-            # Skip if video is too short (unless bypassing)
+            # Apply duration threshold (hardcoded 3-minute minimum)
             duration_secs = video_data.get("duration_seconds", 0)
-            if not bypass_duration and duration_secs < min_duration_secs:
+            if duration_secs < min_duration_secs:
                 logger.info(
                     f"Skipping video {video_data['id']} - duration {duration_secs}s "
-                    f"is less than minimum {min_duration_secs}s (channel not bypassed)"
+                    f"is less than minimum {min_duration_secs}s for channel {channel.name}"
                 )
                 continue
                 
             video = Video(
                 id=video_data["id"],
-                channel_id=video_data["channel_id"],
+                channel_id=channel.id,
                 title=video_data["title"],
                 description=video_data.get("description"),
                 published_at=_parse_datetime(video_data["published_at"]),
@@ -237,7 +236,7 @@ class ChannelTracker:
             )
             videos.append(video)
 
-        logger.info(f"Collected {len(videos)} videos from channel {channel_id}")
+        logger.info(f"Collected {len(videos)} videos from channel {channel.name} ({channel.id})")
         return videos
 
     def sync_channel(self, channel_name: str) -> ChannelSyncResult:
@@ -285,24 +284,18 @@ class ChannelTracker:
             except Exception as e:
                 logger.warning(f"Failed to save channel to database: {e}")
 
-            # Check for bypasses
-            bypass_duration = any(
-                b.lower() in [channel_name.lower(), channel.name.lower(), channel.handle.lower() if channel.handle else ""] 
-                for b in self.settings.bypass_duration_channels
-            )
+            # Check for extended lookback bypass (duration threshold is now handled automatically)
             bypass_lookback = any(
                 b.lower() in [channel_name.lower(), channel.name.lower(), channel.handle.lower() if channel.handle else ""] 
                 for b in self.settings.bypass_lookback_channels
             )
             
             hours = self.settings.extended_lookback_hours if bypass_lookback else None
-            if bypass_duration:
-                logger.info(f"Channel {channel.name} is bypassing duration limits")
             if bypass_lookback:
-                logger.info(f"Channel {channel.name} is bypassing lookback limits (using {hours} hours)")
+                logger.info(f"Channel {channel.name} is using extended lookback (using {hours} hours)")
 
-            # Fetch recent videos
-            videos = self.fetch_recent_videos(channel.id, hours=hours, bypass_duration=bypass_duration)
+            # Fetch recent videos using new threshold system
+            videos = self.fetch_recent_videos(channel, hours=hours)
 
             # Save videos to database (only new ones)
             saved_videos = []
@@ -530,16 +523,8 @@ class ChannelTracker:
             except Exception as e:
                 logger.warning(f"Failed to save channel to database: {e}")
 
-            # Check for bypasses (only duration bypass applies here as window is fixed)
-            bypass_duration = any(
-                b.lower() in [channel_name.lower(), channel.name.lower(), channel.handle.lower() if channel.handle else ""] 
-                for b in self.settings.bypass_duration_channels
-            )
-            if bypass_duration:
-                logger.info(f"Channel {channel.name} is bypassing duration limits for date {target_date}")
-
-            # Fetch videos in window
-            videos = self.fetch_videos_in_window(channel.id, window, bypass_duration=bypass_duration)
+            # Fetch videos in window using new threshold system
+            videos = self.fetch_videos_in_window(channel, window)
 
             # Save videos to database (only new ones)
             saved_videos = []
@@ -589,47 +574,46 @@ class ChannelTracker:
                 error=str(e),
             )
 
-    def fetch_videos_in_window(self, channel_id: str, window: TimeWindow, bypass_duration: bool = False) -> List[Video]:
+    def fetch_videos_in_window(self, channel: Channel, window: TimeWindow) -> List[Video]:
         """
         Fetch videos from a channel within a specific time window.
 
         Args:
-            channel_id: YouTube channel ID
+            channel: Channel object
             window: TimeWindow to filter videos by
-            bypass_duration: If True, skips the minimum duration filter
 
         Returns:
             List of Video objects published within the window
         """
         logger.debug(
-            f"Fetching videos for channel {channel_id} in window "
-            f"{window.start_utc} to {window.end_utc} (bypass_duration={bypass_duration})"
+            f"Fetching videos for channel {channel.name} ({channel.id}) in window "
+            f"{window.start_utc} to {window.end_utc}"
         )
 
         # Get videos with metadata using the window start as our lookback anchor
         videos_data = self.youtube_client.get_recent_videos_with_metadata(
-            channel_id, since_datetime=window.start_utc
+            channel.id, since_datetime=window.start_utc
         )
 
         # Filter videos to only include those in our exact window
         videos = []
-        min_duration_secs = self.settings.min_video_duration_minutes * 60
+        min_duration_secs = self.get_min_duration_for_channel(channel)
         
         for video_data in videos_data:
             published_at = _parse_datetime(video_data["published_at"])
             if published_at and window.contains(published_at):
-                # Skip if video is too short (unless bypassing)
+                # Apply duration threshold (hardcoded 3-minute minimum)
                 duration_secs = video_data.get("duration_seconds", 0)
-                if not bypass_duration and duration_secs < min_duration_secs:
+                if duration_secs < min_duration_secs:
                     logger.info(
                         f"Skipping video {video_data['id']} - duration {duration_secs}s "
-                        f"is less than minimum {min_duration_secs}s (channel not bypassed)"
+                        f"is less than minimum {min_duration_secs}s for channel {channel.name}"
                     )
                     continue
                     
                 video = Video(
                     id=video_data["id"],
-                    channel_id=video_data["channel_id"],
+                    channel_id=channel.id,
                     title=video_data["title"],
                     description=video_data.get("description"),
                     published_at=published_at,
@@ -646,8 +630,61 @@ class ChannelTracker:
                 )
                 videos.append(video)
 
-        logger.info(f"Collected {len(videos)} videos from channel {channel_id} in window {window.date_str}")
+        logger.info(f"Collected {len(videos)} videos from channel {channel.name} ({channel.id}) in window {window.date_str}")
         return videos
+
+    def _get_channel_threshold(self, channel: Channel) -> Optional[int]:
+        """
+        Get custom threshold in minutes for channel, or None if not found.
+        
+        Checks both channel handle and name (case-insensitive).
+        
+        Args:
+            channel: Channel object
+        
+        Returns:
+            Threshold in minutes, or None if not found
+        """
+        thresholds = self.settings.channel_duration_thresholds
+        
+        # Check by handle first (more specific), then name
+        for identifier in [channel.handle, channel.name]:
+            if identifier and identifier.lower() in thresholds:
+                return thresholds[identifier.lower()]
+        
+        return None
+    
+    def get_min_duration_for_channel(self, channel: Channel) -> int:
+        """
+        Get minimum duration threshold for a channel in seconds.
+        
+        Logic:
+        1. Check if channel has custom threshold
+        2. If found, use max(3_minutes, custom_threshold)
+        3. Otherwise, default to 3 minutes (hard minimum)
+        
+        Args:
+            channel: Channel object
+        
+        Returns:
+            Minimum duration in seconds
+        """
+        HARD_MIN_SECS = 3 * 60  # Hardcoded absolute minimum
+        
+        custom_minutes = self._get_channel_threshold(channel)
+        if custom_minutes:
+            threshold_secs = max(HARD_MIN_SECS, custom_minutes * 60)
+            logger.debug(
+                f"Using custom threshold for channel {channel.name}: "
+                f"{custom_minutes} minutes ({threshold_secs}s)"
+            )
+            return threshold_secs
+        else:
+            logger.debug(
+                f"Using default threshold for channel {channel.name}: "
+                f"3 minutes ({HARD_MIN_SECS}s)"
+            )
+            return HARD_MIN_SECS  # Default: 3 minutes
 
     # (Removed _parse_datetime from here)
 
