@@ -283,9 +283,10 @@ class GoogleOAuthClient:
 
         published_after: datetime
         if since_datetime is not None:
-            if since_datetime.tzinfo is None:
-                since_datetime = since_datetime.replace(tzinfo=timezone.utc)
-            published_after = since_datetime
+            dt = since_datetime
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            published_after = dt
             logger.debug(f"Getting videos for channel {channel_id} since {published_after.isoformat()}")
         else:
             published_after = datetime.now(timezone.utc) - timedelta(hours=hours)
