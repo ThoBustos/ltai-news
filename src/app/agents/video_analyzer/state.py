@@ -1,7 +1,6 @@
 """Type-safe state definition for video analysis workflow."""
 
-from typing import Dict, Any, List
-from typing_extensions import TypedDict, NotRequired
+from typing import Dict, Any, List, TypedDict, NotRequired
 
 from app.models.video_analysis import VideoAnalysisResponse, ProcessingMetrics
 

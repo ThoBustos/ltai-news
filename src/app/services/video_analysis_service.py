@@ -205,7 +205,7 @@ class VideoAnalysisService:
         
         return True
     
-    async def _update_video_status(self, video_id: str, status: str, error_msg: str = None):
+    async def _update_video_status(self, video_id: str, status: str, error_msg: Optional[str] = None):
         """Update video processing status.
         
         Args:

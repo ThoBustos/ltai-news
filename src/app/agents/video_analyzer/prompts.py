@@ -1,5 +1,6 @@
 """Prompt management for video analysis using Opik ChatPrompt."""
 
+from typing import Any, Dict, List
 import opik
 
 
@@ -9,7 +10,7 @@ class VideoAnalysisPrompts:
     @staticmethod
     def get_master_extraction_prompt() -> opik.ChatPrompt:
         """Get comprehensive analysis prompt with structured output schema."""
-        messages = [
+        messages: List[Dict[str, Any]] = [
             {
                 "role": "system",
                 "content": """You are an expert at analyzing technical videos and extracting comprehensive insights.

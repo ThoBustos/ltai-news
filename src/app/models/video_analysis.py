@@ -81,7 +81,7 @@ class VideoAnalysisComplete(BaseModel):
     input_tokens: int  # Track input tokens separately
     output_tokens: int  # Track output tokens separately
     total_tokens: int
-    total_cost: float
+    total_cost: Optional[float] = None  # Opik tracks cost automatically
     total_processing_time_seconds: float
     confidence_scores: Dict[str, float]
     
@@ -113,7 +113,7 @@ class ProcessingMetrics(BaseModel):
     # Token and cost breakdown
     input_tokens: int
     output_tokens: int
-    total_cost: float
+    total_cost: Optional[float] = None  # Opik tracks cost automatically
     processing_time_seconds: float
     
     # Quality metrics
