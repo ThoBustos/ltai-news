@@ -17,6 +17,7 @@ from app.models.video import Video, VideoProcessingStatus
 from app.repositories import VideoRepository, ChannelRepository
 from app.services.channel_tracker import ChannelTracker
 from app.services.transcript_service import TranscriptService
+from app.services.video_analysis_service import VideoAnalysisService
 
 
 class ContentOrchestrator:
@@ -28,6 +29,7 @@ class ContentOrchestrator:
         self.channel_repo = ChannelRepository()
         self.channel_tracker = ChannelTracker()
         self.transcript_service = TranscriptService()
+        self.video_analysis_service = VideoAnalysisService()
     
     async def run_daily_pipeline(self, target_date: date) -> PipelineResult:
         """Run the complete daily content pipeline for a specific date.
@@ -200,7 +202,7 @@ class ContentOrchestrator:
             )
     
     async def _process_videos(self, target_date: date, transcript_result: Optional[TranscriptExtractionResult] = None) -> ProcessingResult:
-        """Process videos for the target date.
+        """Process videos for the target date using video analysis service.
         
         Args:
             target_date: Date to process videos for
@@ -212,51 +214,48 @@ class ContentOrchestrator:
         started_at = datetime.now(timezone.utc)
         errors = []
         
-        logger.info(f"Processing videos for {target_date} (placeholder implementation)")
+        logger.info(f"Processing videos for {target_date}")
         
         try:
-            # Get videos that need processing for this date
+            # Get videos that need processing (status = COLLECTED, transcript_fetched = True)
             processing_queue = self.get_processing_queue(target_date)
             
-            # Use transcript statistics if available, otherwise placeholder
+            # Filter to only videos with transcripts
+            videos_with_transcripts = [
+                v for v in processing_queue 
+                if self.video_repo.has_transcript(v.id) and not await self.video_analysis_service.has_analysis(v.id)
+            ]
+            
+            logger.info(f"Found {len(videos_with_transcripts)} videos with transcripts needing analysis")
+            
             videos_processed = 0
             transcripts_extracted = transcript_result.transcripts_extracted if transcript_result else 0
             analyses_completed = 0
             
-            for video in processing_queue:
+            for video in videos_with_transcripts:
                 try:
-                    # Update status to indicate we've started processing
-                    self.video_repo.update_status(
-                        video.id, 
-                        VideoProcessingStatus.PROCESSING,
-                        processed_at=datetime.now(timezone.utc)
-                    )
-                    videos_processed += 1
+                    logger.info(f"Processing video {video.id}: {video.title[:50]}...")
                     
-                    # Placeholder: Immediately mark as processed for now
-                    # In the future, this will call transcript and analysis services
-                    self.video_repo.update_status(
-                        video.id,
-                        VideoProcessingStatus.PROCESSED,
-                        processed_at=datetime.now(timezone.utc)
-                    )
+                    # Analyze video using the analysis service
+                    analysis = await self.video_analysis_service.analyze_video(video.id)
                     
+                    if analysis:
+                        analyses_completed += 1
+                        videos_processed += 1
+                        logger.info(f"Successfully analyzed video {video.id}")
+                    else:
+                        error_msg = f"Analysis returned None for video {video.id}"
+                        logger.error(error_msg)
+                        errors.append(error_msg)
+                        
                 except Exception as e:
                     error_msg = f"Failed to process video {video.id}: {str(e)}"
-                    logger.error(error_msg)
+                    logger.error(error_msg, exc_info=True)
                     errors.append(error_msg)
-                    
-                    # Mark video as failed
-                    try:
-                        self.video_repo.update_status(
-                            video.id,
-                            VideoProcessingStatus.FAILED,
-                            processing_error=str(e)
-                        )
-                    except Exception:
-                        pass  # Don't let status update failures cascade
             
             completed_at = datetime.now(timezone.utc)
+            
+            logger.info(f"Video processing completed: {analyses_completed}/{len(videos_with_transcripts)} analyses successful")
             
             return ProcessingResult(
                 videos_processed=videos_processed,

@@ -104,6 +104,55 @@ curl -X POST http://localhost:8000/api/orchestrator/backfill/async \
   -d '{"start_date": "2025-01-15", "end_date": "2025-01-20"}'
 ```
 
+### Video Analysis & Processing
+
+#### Process Single Video
+Analyze individual videos with comprehensive AI extraction:
+
+```bash
+# Synchronous processing (returns full results)
+curl -X POST http://localhost:8000/api/orchestrator/process-video/VIDEO_ID \
+  -H "Content-Type: application/json"
+
+# Asynchronous processing (immediate response, runs in background)
+curl -X POST http://localhost:8000/api/orchestrator/process-video/VIDEO_ID/async \
+  -H "Content-Type: application/json"
+```
+
+#### Get Analysis Statistics
+Monitor processing costs, performance, and success rates:
+
+```bash
+# Last 30 days (default)
+curl http://localhost:8000/api/orchestrator/analysis/stats
+
+# Custom time period
+curl "http://localhost:8000/api/orchestrator/analysis/stats?days=7"
+```
+
+**Example Response:**
+```json
+{
+  "message": "Video dQw4w9WgXcQ analyzed successfully",
+  "video_id": "dQw4w9WgXcQ", 
+  "status": "completed",
+  "analysis": {
+    "tldr": "Video summary...",
+    "core_topics": [{"topic": "AI", "category": "technical", "importance": "high"}],
+    "lessons_learned": {"technical": ["..."], "business": ["..."]},
+    "total_cost": 0.0234,
+    "total_tokens": 1567
+  },
+  "processing_time_seconds": 12.4
+}
+```
+
+**Prerequisites & Notes:**
+- Video must have transcript available (use extract-transcripts endpoint first)
+- Replace `VIDEO_ID` with actual YouTube video IDs from tracked channels
+- Analysis extracts: TLDR, topics, lessons, sources, concepts, people, communities
+- Costs and token usage tracked automatically via Opik integration
+
 ### Channel Management
 
 #### List Tracked Channels

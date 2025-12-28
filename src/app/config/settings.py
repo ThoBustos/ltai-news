@@ -119,6 +119,42 @@ class Settings(BaseSettings):
         alias="TRANSCRIPT_LANGUAGE_CODE",
     )
 
+    # Gemini Configuration
+    google_api_key: Optional[str] = Field(
+        default=None,
+        description="Google API key for Gemini models",
+        alias="GOOGLE_API_KEY"
+    )
+
+    # Opik Configuration
+    opik_api_key: Optional[str] = Field(
+        default=None,
+        description="Opik API key for observability and prompt management",
+        alias="OPIK_API_KEY"
+    )
+    opik_project_name: Optional[str] = Field(
+        default=None,
+        description="Opik project name",
+        alias="OPIK_PROJECT_NAME"
+    )
+    opik_workspace: Optional[str] = Field(
+        default=None,
+        description="Opik workspace",
+        alias="OPIK_WORKSPACE"
+    )
+
+    # Video Analysis Configuration  
+    analysis_model_name: str = Field(
+        default="gemini-3-flash-preview",
+        description="Model name for video analysis (valid options: gemini-3-flash-preview, gemini-3-pro-preview)",
+        alias="ANALYSIS_MODEL_NAME"
+    )
+    analysis_timeout_seconds: int = Field(
+        default=300,
+        description="Timeout for video analysis in seconds",
+        alias="ANALYSIS_TIMEOUT_SECONDS"
+    )
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

@@ -44,6 +44,21 @@ class VideoRepository:
             logger.error(f"Failed to check if video exists {video_id}: {e}")
             raise
 
+    def get_by_id(self, video_id: str) -> Optional[Video]:
+        """
+        Get video by YouTube video ID.
+
+        Args:
+            video_id: YouTube video ID
+
+        Returns:
+            Video model or None if not found
+
+        Raises:
+            Exception: If database operation fails
+        """
+        return self.get_video_by_id(video_id)
+
     def get_video_by_id(self, video_id: str) -> Optional[Video]:
         """
         Get video by YouTube video ID.

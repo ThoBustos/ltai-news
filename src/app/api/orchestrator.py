@@ -9,7 +9,9 @@ from pydantic import BaseModel
 from app.core.logging import logger
 from app.core.utils.time_window import parse_date
 from app.models.pipeline import PipelineResult, PipelineStatus, TranscriptExtractionResult
+from app.models.video_analysis import VideoAnalysisComplete
 from app.services.orchestrator import ContentOrchestrator
+from app.services.video_analysis_service import VideoAnalysisService
 
 router = APIRouter(prefix="/api/orchestrator", tags=["orchestrator"])
 
@@ -48,6 +50,18 @@ class TranscriptExtractionResponse(BaseModel):
     target_date: str
     status: str
     result: TranscriptExtractionResult
+
+
+class VideoAnalysisResponse(BaseModel):
+    """Response for single video analysis requests."""
+    
+    message: str
+    video_id: str
+    status: str
+    analysis: VideoAnalysisComplete = None
+    processing_time_seconds: float = None
+    total_cost: float = None
+    total_tokens: int = None
 
 
 @router.post("/run-daily/{date_str}", response_model=PipelineRunResponse)
@@ -352,6 +366,136 @@ async def extract_transcripts_async(date_str: str, background_tasks: BackgroundT
     except Exception as e:
         logger.error(f"Failed to start background transcript extraction for {date_str}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to start transcript extraction: {str(e)}")
+
+
+@router.post("/process-video/{video_id}", response_model=VideoAnalysisResponse)
+async def process_single_video(video_id: str) -> VideoAnalysisResponse:
+    """
+    Process a single video through the analysis pipeline.
+    
+    This endpoint:
+    1. Validates the video exists and has a transcript
+    2. Runs the complete video analysis workflow
+    3. Saves results to the database
+    4. Returns detailed analysis results
+    
+    Args:
+        video_id: YouTube video ID to process
+        
+    Returns:
+        VideoAnalysisResponse with analysis results and metrics
+    """
+    logger.info(f"API request to process video {video_id}")
+    
+    try:
+        # Initialize video analysis service
+        analysis_service = VideoAnalysisService()
+        
+        # Check if video already has analysis
+        if await analysis_service.has_analysis(video_id):
+            existing_analysis = await analysis_service.get_analysis(video_id)
+            return VideoAnalysisResponse(
+                message=f"Video {video_id} already analyzed",
+                video_id=video_id,
+                status="already_processed",
+                analysis=existing_analysis,
+                processing_time_seconds=existing_analysis.total_processing_time_seconds if existing_analysis else 0,
+                total_cost=existing_analysis.total_cost if existing_analysis else 0,
+                total_tokens=existing_analysis.total_tokens if existing_analysis else 0
+            )
+        
+        # Analyze video
+        import time
+        start_time = time.time()
+        
+        analysis = await analysis_service.analyze_video(video_id)
+        
+        processing_time = time.time() - start_time
+        
+        if analysis:
+            return VideoAnalysisResponse(
+                message=f"Video {video_id} analyzed successfully",
+                video_id=video_id,
+                status="completed",
+                analysis=analysis,
+                processing_time_seconds=processing_time,
+                total_cost=analysis.total_cost,
+                total_tokens=analysis.total_tokens
+            )
+        else:
+            return VideoAnalysisResponse(
+                message=f"Video {video_id} analysis failed",
+                video_id=video_id,
+                status="failed"
+            )
+            
+    except Exception as e:
+        logger.error(f"Video analysis failed for {video_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Video analysis failed: {str(e)}")
+
+
+@router.post("/process-video/{video_id}/async")
+async def process_single_video_async(video_id: str, background_tasks: BackgroundTasks):
+    """
+    Process a single video asynchronously in the background.
+    
+    Args:
+        video_id: YouTube video ID to process
+        background_tasks: FastAPI background tasks
+        
+    Returns:
+        Immediate response while video analysis runs in background
+    """
+    logger.info(f"API request to process video {video_id} async")
+    
+    try:
+        # Add video analysis task to background
+        async def run_video_analysis():
+            analysis_service = VideoAnalysisService()
+            analysis = await analysis_service.analyze_video(video_id)
+            if analysis:
+                logger.info(f"Background video analysis completed successfully for {video_id}")
+            else:
+                logger.error(f"Background video analysis failed for {video_id}")
+        
+        background_tasks.add_task(run_video_analysis)
+        
+        return {
+            "message": f"Video analysis started in background for {video_id}",
+            "video_id": video_id,
+            "status": "started",
+            "note": "Check logs for completion status"
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to start background video analysis for {video_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to start video analysis: {str(e)}")
+
+
+@router.get("/analysis/stats")
+async def get_analysis_stats(days: int = 30):
+    """
+    Get video analysis statistics for monitoring.
+    
+    Args:
+        days: Number of days to look back (default: 30)
+        
+    Returns:
+        Analysis statistics including costs, processing times, and success rates
+    """
+    try:
+        analysis_service = VideoAnalysisService()
+        stats = await analysis_service.get_analysis_stats(days)
+        
+        return {
+            "status": "success",
+            "data": stats,
+            "days_analyzed": days
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get analysis stats: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get analysis stats: {str(e)}")
 
 
 @router.get("/health")
