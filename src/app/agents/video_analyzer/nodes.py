@@ -5,8 +5,8 @@ import json
 from datetime import datetime, timezone
 
 import opik
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import SystemMessage, HumanMessage
+from google import genai
+from google.genai.types import GenerateContentConfig
 
 from app.core.logging import logger
 from app.config.settings import settings
@@ -16,19 +16,22 @@ from app.repositories.channel_repository import ChannelRepository
 from app.agents.video_analyzer.state import VideoAnalysisState
 from app.agents.video_analyzer.prompts import VideoAnalysisPrompts
 
+# Gemini Flash pricing (as of Dec 2024)
+# https://ai.google.dev/pricing
+GEMINI_FLASH_INPUT_PRICE_PER_1M = 0.075   # $0.075 per 1M input tokens
+GEMINI_FLASH_OUTPUT_PRICE_PER_1M = 0.30    # $0.30 per 1M output tokens
 
-def _extract_text(content) -> str:
-    """Extract text from AIMessage content (handles str or list).
-    
-    Gemini models can return content as a string or as a list of content parts.
-    This normalizes both cases to a single string.
-    """
-    if isinstance(content, str):
-        return content
-    return "".join(
-        p if isinstance(p, str) else p.get("text", "")
-        for p in content
-    )
+
+def _get_genai_client():
+    """Get Google GenAI client for LLM calls."""
+    return genai.Client(api_key=settings.google_api_key)
+
+
+def _calculate_cost(input_tokens: int, output_tokens: int) -> float:
+    """Calculate cost in USD from token counts using Gemini Flash pricing."""
+    input_cost = (input_tokens / 1_000_000) * GEMINI_FLASH_INPUT_PRICE_PER_1M
+    output_cost = (output_tokens / 1_000_000) * GEMINI_FLASH_OUTPUT_PRICE_PER_1M
+    return input_cost + output_cost
 
 
 async def load_context_node(state: VideoAnalysisState) -> VideoAnalysisState:
@@ -73,7 +76,7 @@ async def load_context_node(state: VideoAnalysisState) -> VideoAnalysisState:
 
 
 async def master_extraction_node(state: VideoAnalysisState) -> VideoAnalysisState:
-    """Master extraction using ChatGoogleGenerativeAI with real token tracking."""
+    """Master extraction using Google GenAI with Opik automatic cost tracking."""
     logger.info(f"Starting master extraction for video {state['video_id']}")
 
     try:
@@ -93,67 +96,68 @@ async def master_extraction_node(state: VideoAnalysisState) -> VideoAnalysisStat
             }
         )
 
-        # Initialize LLM (uses settings.analysis_model_name)
-        model_name = settings.analysis_model_name
-        llm = ChatGoogleGenerativeAI(
-            model=model_name,
-            temperature=1.0,
-            api_key=settings.google_api_key,
-        )
-
-        # Convert to LangChain messages
-        langchain_messages = []
+        # Build prompt content for Google GenAI
+        system_content = ""
+        user_content = ""
         for msg in formatted_messages:
             content = str(msg.get("content", ""))
             if msg.get("role") == "system":
-                langchain_messages.append(SystemMessage(content=content))
+                system_content = content
             else:
-                langchain_messages.append(HumanMessage(content=content))
+                user_content = content
 
-        # Add JSON schema instruction
+        # Add JSON schema instruction to user content
         schema_instruction = f"""
 
 Respond with valid JSON matching this exact schema:
 {json.dumps(VideoAnalysisResponse.model_json_schema(), indent=2)}
 
 Your response must be valid JSON only, no additional text."""
+        
+        user_content += schema_instruction
 
-        langchain_messages[-1] = HumanMessage(
-            content=langchain_messages[-1].content + schema_instruction
-        )
+        # Get GenAI client (track_langgraph handles workflow tracing)
+        client = _get_genai_client()
+        model_name = settings.analysis_model_name
 
-        # Make LLM call - use regular ainvoke to get usage_metadata
+        # Make LLM call using Google GenAI SDK
         start_time = time.time()
-        response = await llm.ainvoke(langchain_messages)
+        response = client.models.generate_content(
+            model=model_name,
+            contents=user_content,
+            config=GenerateContentConfig(
+                systemInstruction=system_content,
+                temperature=1.0,
+            )
+        )
         processing_time = time.time() - start_time
 
-        # Extract REAL token counts from usage_metadata
-        usage = response.usage_metadata or {}
-        input_tokens = usage.get("input_tokens", 0)
-        output_tokens = usage.get("output_tokens", 0)
+        # Extract token counts from response
+        usage = response.usage_metadata
+        input_tokens = (usage.prompt_token_count or 0) if usage else 0
+        output_tokens = (usage.candidates_token_count or 0) if usage else 0
+        total_tokens = (usage.total_token_count or 0) if usage else (input_tokens + output_tokens)
+        
+        # Calculate cost from token counts
+        cost = _calculate_cost(input_tokens, output_tokens)
 
-        # Calculate cost with real token counts (Gemini Flash pricing)
-        INPUT_PRICE_PER_1M = 0.075
-        OUTPUT_PRICE_PER_1M = 0.30
-        cost = (input_tokens / 1_000_000) * INPUT_PRICE_PER_1M + (output_tokens / 1_000_000) * OUTPUT_PRICE_PER_1M
-
-        # Parse JSON response - handle both str and list content types
-        response_text = _extract_text(response.content).strip()
+        # Parse JSON response
+        response_text = (response.text or "").strip()
         if response_text.startswith('```json'):
             response_text = response_text.replace('```json', '').replace('```', '').strip()
         elif response_text.startswith('```'):
             response_text = response_text.replace('```', '').strip()
 
         if '{' in response_text:
-            start = response_text.find('{')
-            end = response_text.rfind('}') + 1
-            response_text = response_text[start:end]
+            start_idx = response_text.find('{')
+            end_idx = response_text.rfind('}') + 1
+            response_text = response_text[start_idx:end_idx]
 
         parsed_response = VideoAnalysisResponse.model_validate_json(response_text)
 
-        # Create processing metrics with REAL values
+        # Create processing metrics with calculated cost
         metrics = ProcessingMetrics(
-            workflow_version="1.1",
+            workflow_version="1.2",
             extraction_method="single-master-prompt",
             started_at=datetime.now(timezone.utc),
             completed_at=datetime.now(timezone.utc),
@@ -187,7 +191,7 @@ Your response must be valid JSON only, no additional text."""
                         "confidence_avg": sum(parsed_response.confidence_scores.values()) / len(parsed_response.confidence_scores),
                         "tokens_input": input_tokens,
                         "tokens_output": output_tokens,
-                        "total_tokens": input_tokens + output_tokens,
+                        "total_tokens": total_tokens,
                         "cost_usd": cost,
                         "processing_time_seconds": processing_time
                     }
@@ -196,8 +200,7 @@ Your response must be valid JSON only, no additional text."""
             pass
 
         logger.info(
-            f"Master extraction completed: {input_tokens + output_tokens} tokens, "
-            f"${cost:.6f}, {processing_time:.2f}s"
+            f"Master extraction completed: {total_tokens} tokens, ${cost:.6f}, {processing_time:.2f}s"
         )
 
         return state
