@@ -1,67 +1,21 @@
 """API endpoints for orchestrator control."""
 
-from datetime import date
-from typing import List
-
 from fastapi import APIRouter, HTTPException, BackgroundTasks
-from pydantic import BaseModel
 
 from app.core.logging import logger
 from app.core.utils.time_window import parse_date
-from app.models.pipeline import PipelineResult, PipelineStatus, TranscriptExtractionResult
-from app.models.video_analysis import VideoAnalysisComplete
+from app.models.pipeline import PipelineStatus
 from app.services.orchestrator import ContentOrchestrator
 from app.services.video_analysis_service import VideoAnalysisService
+from app.api.schemas.orchestrator import (
+    PipelineRunResponse,
+    BackfillRequest,
+    BackfillResponse,
+    TranscriptExtractionResponse,
+    VideoAnalysisResponse,
+)
 
 router = APIRouter(prefix="/api/orchestrator", tags=["orchestrator"])
-
-
-class PipelineRunResponse(BaseModel):
-    """Response for pipeline run requests."""
-    
-    message: str
-    target_date: str
-    status: str
-    result: PipelineResult
-
-
-class BackfillRequest(BaseModel):
-    """Request for backfill operations."""
-    
-    start_date: str  # YYYY-MM-DD format
-    end_date: str    # YYYY-MM-DD format
-
-
-class BackfillResponse(BaseModel):
-    """Response for backfill requests."""
-    
-    message: str
-    date_range: str
-    total_runs: int
-    successful_runs: int
-    failed_runs: int
-    results: List[PipelineResult]
-
-
-class TranscriptExtractionResponse(BaseModel):
-    """Response for transcript extraction requests."""
-    
-    message: str
-    target_date: str
-    status: str
-    result: TranscriptExtractionResult
-
-
-class VideoAnalysisResponse(BaseModel):
-    """Response for single video analysis requests."""
-    
-    message: str
-    video_id: str
-    status: str
-    analysis: VideoAnalysisComplete = None
-    processing_time_seconds: float = None
-    total_cost: float = None
-    total_tokens: int = None
 
 
 @router.post("/run-daily/{date_str}", response_model=PipelineRunResponse)

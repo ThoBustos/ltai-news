@@ -104,7 +104,7 @@ class VideoAnalysisService:
         """
         try:
             # Get videos with transcripts but no analysis
-            videos = self.video_repo.get_videos_by_status("collected", limit=limit)
+            videos = self.video_repo.get_unprocessed_videos(limit=limit)
             
             # Filter to only those with transcripts and no analysis
             needing_analysis = []

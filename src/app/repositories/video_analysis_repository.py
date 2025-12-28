@@ -37,27 +37,28 @@ class VideoAnalysisRepository:
 
         try:
             # Prepare data - convert Pydantic to database format
+            # NOTE: Pass Python objects directly for JSONB columns (Supabase handles serialization)
             data = {
                 "video_id": analysis.video_id,
                 "summary": analysis.tldr,
                 "analysis": analysis.detailed_insights,
-                "key_points": json.dumps([f"{topic['topic']} ({topic['category']})" for topic in analysis.core_topics]),
-                "tags": json.dumps(self._extract_tags(analysis)),
+                "key_points": [f"{topic['topic']} ({topic['category']})" for topic in analysis.core_topics],
+                "tags": self._extract_tags(analysis),
                 "tldr": analysis.tldr,
-                "core_topics": json.dumps(analysis.core_topics, default=_json_serializer),
-                "lessons_learned": json.dumps(analysis.lessons_learned, default=_json_serializer),
+                "core_topics": analysis.core_topics,
+                "lessons_learned": analysis.lessons_learned,
                 "detailed_insights": analysis.detailed_insights,
-                "sources_referenced": json.dumps(analysis.sources_referenced, default=_json_serializer),
-                "concepts_mentioned": json.dumps(analysis.concepts_mentioned, default=_json_serializer),
-                "people_mentioned": json.dumps(analysis.people_mentioned, default=_json_serializer),
-                "communities_mentioned": json.dumps(analysis.communities_mentioned, default=_json_serializer),
-                "metadata_extracted": json.dumps(analysis.metadata_extracted, default=_json_serializer),
+                "sources_referenced": analysis.sources_referenced,
+                "concepts_mentioned": analysis.concepts_mentioned,
+                "people_mentioned": analysis.people_mentioned,
+                "communities_mentioned": analysis.communities_mentioned,
+                "metadata_extracted": analysis.metadata_extracted,
                 "input_tokens": analysis.input_tokens,
                 "output_tokens": analysis.output_tokens,
                 "total_tokens": analysis.total_tokens,
                 "total_cost": analysis.total_cost,
                 "total_processing_time_seconds": analysis.total_processing_time_seconds,
-                "processing_metadata": json.dumps(analysis.processing_metadata, default=_json_serializer) if analysis.processing_metadata else None,
+                "processing_metadata": analysis.processing_metadata,
                 "model_name": analysis.model_name,
                 "tokens_used": analysis.total_tokens,
                 "processed_at": analysis.processed_at.isoformat() if analysis.processed_at else datetime.now(timezone.utc).isoformat()
@@ -172,7 +173,7 @@ class VideoAnalysisRepository:
 
         try:
             self.client.table(self.table_name).update({
-                "processing_metadata": json.dumps(metrics, default=_json_serializer),
+                "processing_metadata": metrics,  # Pass Python dict directly for JSONB
                 "total_cost": metrics.get('total_cost', 0.0),
                 "total_processing_time_seconds": metrics.get('processing_time_seconds', 0.0),
                 "processed_at": datetime.now(timezone.utc).isoformat()

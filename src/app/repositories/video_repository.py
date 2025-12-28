@@ -57,21 +57,6 @@ class VideoRepository:
         Raises:
             Exception: If database operation fails
         """
-        return self.get_video_by_id(video_id)
-
-    def get_video_by_id(self, video_id: str) -> Optional[Video]:
-        """
-        Get video by YouTube video ID.
-
-        Args:
-            video_id: YouTube video ID
-
-        Returns:
-            Video model or None if not found
-
-        Raises:
-            Exception: If database operation fails
-        """
         try:
             result = (
                 self.client.table(self.table)
@@ -91,6 +76,9 @@ class VideoRepository:
                 return None
             logger.error(f"Failed to get video {video_id}: {e}")
             raise
+
+    # Alias for backwards compatibility
+    get_video_by_id = get_by_id
 
     def insert_video(self, video: Video) -> Video:
         """
