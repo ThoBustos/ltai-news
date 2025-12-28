@@ -8,7 +8,8 @@
 - Build the pipeline to get the content from youtube and x and extract the value from each in db. (only youtube for now)
 - extract transcripts with youtube-transcript.io and save in db.
 - Create the agentic logic to put all the extracted infos together nicely. v1
-- Review implementation, improve traces, opik login, implementaiton and visibility. clean code.   **(ON THIS!)**
+- Review implementation, improve traces, opik login, implementaiton and visibility. clean code.
+- Create the agent that create the per day digest with all the relevant context. **(ON THIS!)**
 - Create the logic to save everything and connect to front end.
 - Add opik for tracing and costs.
 
