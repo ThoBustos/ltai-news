@@ -356,10 +356,115 @@ class ContentOrchestrator:
             
             logger.info(f"Processing queue for {target_date}: {len(processing_queue)} videos")
             return processing_queue
+        
+        except Exception as e:
+            logger.error(f"Failed to get processing queue for {target_date}: {e}")
+            return []
+
+    async def reprocess_failed_videos(self, target_date: date) -> ProcessingResult:
+        """Reprocess videos that failed analysis for a specific date.
+        
+        This method:
+        1. Gets all failed videos for the target date
+        2. Deletes their existing analysis data (if any)
+        3. Resets their status back to 'collected'
+        4. Runs the analysis pipeline on them
+        
+        Args:
+            target_date: Date to reprocess failed videos for
+            
+        Returns:
+            ProcessingResult with reprocessing statistics
+        """
+        started_at = datetime.now(timezone.utc)
+        errors = []
+        
+        logger.info(f"Starting reprocess of failed videos for {target_date}")
+        
+        try:
+            # Get failed videos first (before resetting)
+            failed_videos = self.video_repo.get_failed_videos(target_date)
+            
+            if not failed_videos:
+                logger.info(f"No failed videos to reprocess for {target_date}")
+                return ProcessingResult(
+                    videos_processed=0,
+                    transcripts_extracted=0,
+                    analyses_completed=0,
+                    errors=[],
+                    started_at=started_at,
+                    completed_at=datetime.now(timezone.utc),
+                )
+            
+            logger.info(f"Found {len(failed_videos)} failed videos to reprocess for {target_date}")
+            
+            # Delete existing failed analysis data for these videos
+            for video in failed_videos:
+                try:
+                    await self.video_analysis_service.delete_analysis(video.id)
+                except Exception as e:
+                    logger.warning(f"Could not delete existing analysis for {video.id}: {e}")
+            
+            # Reset failed videos status to 'collected'
+            reset_count = self.video_repo.reset_failed_videos(target_date)
+            logger.info(f"Reset {reset_count} videos to collected status")
+            
+            # Now run the processing pipeline on them
+            videos_processed = 0
+            analyses_completed = 0
+            
+            for video in failed_videos:
+                try:
+                    # Check if video has transcript
+                    if not self.video_repo.has_transcript(video.id):
+                        logger.warning(f"Video {video.id} has no transcript, skipping")
+                        errors.append(f"Video {video.id} has no transcript")
+                        continue
+                    
+                    logger.info(f"Reprocessing video {video.id}: {video.title[:50]}...")
+                    
+                    # Analyze video
+                    analysis = await self.video_analysis_service.analyze_video(video.id)
+                    
+                    if analysis:
+                        analyses_completed += 1
+                        videos_processed += 1
+                        logger.info(f"Successfully reprocessed video {video.id}")
+                    else:
+                        error_msg = f"Analysis returned None for video {video.id}"
+                        logger.error(error_msg)
+                        errors.append(error_msg)
+                        
+                except Exception as e:
+                    error_msg = f"Failed to reprocess video {video.id}: {str(e)}"
+                    logger.error(error_msg, exc_info=True)
+                    errors.append(error_msg)
+            
+            completed_at = datetime.now(timezone.utc)
+            
+            logger.info(f"Reprocessing completed: {analyses_completed}/{len(failed_videos)} successful")
+            
+            return ProcessingResult(
+                videos_processed=videos_processed,
+                transcripts_extracted=0,
+                analyses_completed=analyses_completed,
+                errors=errors,
+                started_at=started_at,
+                completed_at=completed_at,
+            )
             
         except Exception as e:
-            logger.error(f"Failed to get processing queue for {target_date}: {e}", exc_info=True)
-            return []
+            logger.error(f"Reprocessing failed videos failed: {e}", exc_info=True)
+            errors.append(f"Reprocessing failed: {str(e)}")
+            
+            return ProcessingResult(
+                videos_processed=0,
+                transcripts_extracted=0,
+                analyses_completed=0,
+                errors=errors,
+                started_at=started_at,
+                completed_at=datetime.now(timezone.utc),
+            )
     
     def get_pipeline_status(self, target_date: date) -> PipelineStatus:
         """Get current status of pipeline for target date.
