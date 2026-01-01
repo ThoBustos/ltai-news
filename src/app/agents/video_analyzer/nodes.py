@@ -80,19 +80,26 @@ async def master_extraction_node(state: VideoAnalysisState) -> VideoAnalysisStat
     logger.info(f"Starting master extraction for video {state['video_id']}")
 
     try:
+        # Validate required state from previous node
+        video = state.get("video")
+        transcript = state.get("transcript")
+        channel = state.get("channel")
+        
+        if not video or not transcript or not channel:
+            raise ValueError("Missing required state: video, transcript, or channel not loaded")
+
         # Get prompt from prompts module
         chat_prompt = VideoAnalysisPrompts.get_master_extraction_prompt()
 
-        # Format with variables
+        # Format with variables - V2: Full transcript (no truncation)
         formatted_messages = chat_prompt.format(
             variables={
-                "title": state["video"]["title"],
-                "description": state["video"]["description"],
-                "channel_name": state["channel"]["name"],
-                "url": state["video"]["url"],
-                "published_at": state["video"]["published_at"],
-                "raw_metadata": str(state["video"]["raw_metadata"]),
-                "transcript": state["transcript"]["text"][:12000]
+                "title": video["title"],
+                "description": video["description"],
+                "channel_name": channel["name"],
+                "url": video["url"],
+                "published_at": video["published_at"],
+                "transcript": transcript["text"]  # V2: Full transcript
             }
         )
 
@@ -157,7 +164,7 @@ Your response must be valid JSON only, no additional text."""
 
         # Create processing metrics with calculated cost
         metrics = ProcessingMetrics(
-            workflow_version="1.2",
+            workflow_version="2.0",
             extraction_method="single-master-prompt",
             started_at=datetime.now(timezone.utc),
             completed_at=datetime.now(timezone.utc),
@@ -168,12 +175,19 @@ Your response must be valid JSON only, no additional text."""
             confidence_scores=parsed_response.confidence_scores,
             extraction_completeness={
                 "tldr": bool(parsed_response.tldr),
+                "teaser_hooks": bool(parsed_response.teaser_hooks),
+                "keywords": bool(parsed_response.keywords),
                 "core_topics": bool(parsed_response.core_topics),
                 "lessons_learned": bool(parsed_response.lessons_learned),
                 "sources_referenced": bool(parsed_response.sources_referenced),
                 "concepts_mentioned": bool(parsed_response.concepts_mentioned),
                 "people_mentioned": bool(parsed_response.people_mentioned),
                 "communities_mentioned": bool(parsed_response.communities_mentioned),
+                "direct_quotes": bool(parsed_response.direct_quotes),
+                "analogies_metaphors": bool(parsed_response.analogies_metaphors),
+                "frameworks_shared": bool(parsed_response.frameworks_shared),
+                "statistics_data": bool(parsed_response.statistics_data),
+                "section_analysis": bool(parsed_response.section_analysis),
                 "detailed_insights": bool(parsed_response.detailed_insights)
             }
         )
@@ -218,14 +232,23 @@ async def save_results_node(state: VideoAnalysisState) -> VideoAnalysisState:
     try:
         from app.repositories.video_analysis_repository import VideoAnalysisRepository
 
+        # Validate required state from previous nodes
+        response = state.get("analysis_response")
+        metrics = state.get("metrics")
+        video = state.get("video")
+        channel = state.get("channel")
+        
+        if not response or not metrics:
+            raise ValueError("Missing required state: analysis_response or metrics not found")
+
         analysis_repo = VideoAnalysisRepository()
-        response = state["analysis_response"]
-        metrics = state["metrics"]
 
         complete_analysis = VideoAnalysisComplete(
             video_id=state["video_id"],
             tldr=response.tldr,
             key_audience=response.key_audience,
+            teaser_hooks=response.teaser_hooks,
+            keywords=response.keywords,
             core_topics=[topic.model_dump() for topic in response.core_topics],
             lessons_learned=response.lessons_learned,
             detailed_insights=response.detailed_insights,
@@ -233,9 +256,14 @@ async def save_results_node(state: VideoAnalysisState) -> VideoAnalysisState:
             concepts_mentioned=[concept.model_dump() for concept in response.concepts_mentioned],
             people_mentioned=[person.model_dump() for person in response.people_mentioned],
             communities_mentioned=[community.model_dump() for community in response.communities_mentioned],
+            direct_quotes=[q.model_dump() for q in response.direct_quotes],
+            analogies_metaphors=[a.model_dump() for a in response.analogies_metaphors],
+            frameworks_shared=[f.model_dump() for f in response.frameworks_shared],
+            statistics_data=[s.model_dump() for s in response.statistics_data],
+            section_analysis=[sec.model_dump() for sec in response.section_analysis],
             metadata_extracted={
-                "video": state["video"],
-                "channel": state["channel"],
+                "video": video or {},
+                "channel": channel or {},
                 "workflow_metadata": metrics.model_dump(mode='json')
             },
             input_tokens=metrics.input_tokens,

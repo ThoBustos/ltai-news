@@ -39,7 +39,7 @@ def create_video_analysis_workflow():
     tracked_workflow = opik_manager.track_workflow(
         compiled_workflow,
         workflow_name="video-analysis",
-        tags=["video", "analysis", settings.analysis_model_name, "single-master-prompt"]
+        tags=["video", "analysis", settings.analysis_model_name, "single-master-prompt", "v2.0"]
     )
 
     return tracked_workflow
@@ -82,6 +82,8 @@ async def analyze_video(video_id: str) -> Optional[VideoAnalysisComplete]:
             video_id=video_id,
             tldr=response.tldr,
             key_audience=response.key_audience,
+            teaser_hooks=response.teaser_hooks,
+            keywords=response.keywords,
             core_topics=[topic.model_dump() for topic in response.core_topics],
             lessons_learned=response.lessons_learned,
             detailed_insights=response.detailed_insights,
@@ -89,6 +91,11 @@ async def analyze_video(video_id: str) -> Optional[VideoAnalysisComplete]:
             concepts_mentioned=[concept.model_dump() for concept in response.concepts_mentioned],
             people_mentioned=[person.model_dump() for person in response.people_mentioned],
             communities_mentioned=[community.model_dump() for community in response.communities_mentioned],
+            direct_quotes=[q.model_dump() for q in response.direct_quotes],
+            analogies_metaphors=[a.model_dump() for a in response.analogies_metaphors],
+            frameworks_shared=[f.model_dump() for f in response.frameworks_shared],
+            statistics_data=[s.model_dump() for s in response.statistics_data],
+            section_analysis=[sec.model_dump() for sec in response.section_analysis],
             metadata_extracted=final_state.get("video", {}),
             input_tokens=metrics.input_tokens,
             output_tokens=metrics.output_tokens,
