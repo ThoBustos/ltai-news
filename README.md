@@ -153,6 +153,57 @@ curl "http://localhost:8000/api/orchestrator/analysis/stats?days=7"
 - Analysis extracts: TLDR, topics, lessons, sources, concepts, people, communities
 - Costs and token usage tracked automatically via Opik integration
 
+### Daily Digest Operations
+
+#### Generate Digest for a Specific Day
+Generate the newsletter digest for a specific date (requires videos to be analyzed first):
+
+```bash
+# Synchronous (waits for completion)
+curl -X POST "http://localhost:8000/api/orchestrator/generate-digest/2025-12-29"
+
+# Asynchronous (returns immediately, runs in background)
+curl -X POST "http://localhost:8000/api/orchestrator/generate-digest/2025-12-29/async"
+```
+(it supports regeneration using upsert pattern)
+
+#### Get Digest Content
+Retrieve the generated digest for a specific date:
+
+```bash
+curl "http://localhost:8000/api/orchestrator/digest/2025-12-29"
+```
+
+#### Send Digest Email
+Send the digest to subscribers or a test email:
+
+```bash
+# Send to all subscribers
+curl -X POST "http://localhost:8000/api/orchestrator/send-digest/2025-12-29"
+
+# Send test email
+curl -X POST "http://localhost:8000/api/orchestrator/send-digest/2025-12-29" \
+  -H "Content-Type: application/json" \
+  -d '{"test_email": "test@example.com"}'
+```
+
+#### Reprocess Failed Videos
+Retry analysis for videos that failed processing on a specific date:
+
+```bash
+# Synchronous (waits for completion)
+curl -X POST "http://localhost:8000/api/orchestrator/reprocess-failed/2025-12-29"
+
+# Asynchronous (returns immediately, runs in background)
+curl -X POST "http://localhost:8000/api/orchestrator/reprocess-failed/2025-12-29/async"
+```
+
+This endpoint will:
+1. Find all videos with status "failed" for the date
+2. Delete any partial analysis data
+3. Reset their status to "collected"
+4. Re-run the analysis pipeline
+
 ### Channel Management
 
 #### List Tracked Channels
