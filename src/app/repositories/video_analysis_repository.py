@@ -177,6 +177,26 @@ class VideoAnalysisRepository:
             logger.error(f"Failed to check analysis existence for video {video_id}: {e}", exc_info=True)
             return False
 
+    async def delete_analysis(self, video_id: str) -> bool:
+        """Delete analysis for a video.
+
+        Args:
+            video_id: YouTube video ID
+
+        Returns:
+            True if deleted (or didn't exist), False on error
+        """
+        logger.info(f"Deleting analysis for video {video_id}")
+
+        try:
+            self.client.table(self.table_name).delete().eq("video_id", video_id).execute()
+            logger.debug(f"Deleted analysis for video {video_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to delete analysis for video {video_id}: {e}", exc_info=True)
+            return False
+
     async def update_analysis_metrics(self, video_id: str, metrics: Dict[str, Any]) -> bool:
         """Update processing metrics for existing analysis.
 

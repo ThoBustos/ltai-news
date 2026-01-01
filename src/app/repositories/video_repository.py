@@ -591,3 +591,73 @@ class VideoRepository:
         except Exception as e:
             logger.error(f"Failed to check transcript existence for video {video_id}: {e}")
             return False
+
+    def get_failed_videos(self, target_date: date) -> List[Video]:
+        """Get videos that failed processing for a specific date.
+        
+        Args:
+            target_date: Date to get failed videos for
+            
+        Returns:
+            List of Video models with status 'failed' for the target date
+            
+        Raises:
+            Exception: If database operation fails
+        """
+        try:
+            window = get_window(target_date)
+            
+            result = (
+                self.client.table(self.table)
+                .select("*")
+                .gte("published_at", window.start_utc.isoformat())
+                .lte("published_at", window.end_utc.isoformat())
+                .eq("status", VideoProcessingStatus.FAILED.value)
+                .order("published_at", desc=False)
+                .execute()
+            )
+
+            videos = [Video(**row) for row in result.data]
+            logger.debug(f"Found {len(videos)} failed videos for {target_date}")
+            return videos
+
+        except Exception as e:
+            logger.error(f"Failed to get failed videos for {target_date}: {e}")
+            raise
+
+    def reset_failed_videos(self, target_date: date) -> int:
+        """Reset failed videos back to collected status for reprocessing.
+        
+        Args:
+            target_date: Date to reset failed videos for
+            
+        Returns:
+            Number of videos reset
+            
+        Raises:
+            Exception: If database operation fails
+        """
+        try:
+            window = get_window(target_date)
+            
+            # First get count of failed videos
+            failed_videos = self.get_failed_videos(target_date)
+            
+            if not failed_videos:
+                logger.info(f"No failed videos to reset for {target_date}")
+                return 0
+            
+            # Reset status for each failed video
+            video_ids = [v.id for v in failed_videos]
+            
+            self.client.table(self.table).update({
+                "status": VideoProcessingStatus.COLLECTED.value,
+                "processing_error": None
+            }).in_("id", video_ids).execute()
+            
+            logger.info(f"Reset {len(video_ids)} failed videos to collected status for {target_date}")
+            return len(video_ids)
+
+        except Exception as e:
+            logger.error(f"Failed to reset failed videos for {target_date}: {e}")
+            raise
