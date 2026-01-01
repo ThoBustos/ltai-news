@@ -82,6 +82,13 @@ The most impactful VERBATIM quotes from the transcript. Prioritize:
 - Synthesis statements that connect multiple ideas
 Include speaker attribution (if identifiable) and context for each.
 
+CRITICAL: The "impact" field for each quote MUST be exactly one of these 5 values:
+- "insight" (for aha moments and crystallized insights)
+- "prediction" (for forecasts and future claims)  
+- "contrarian" (for unconventional or challenging views)
+- "actionable" (for concrete advice)
+- "synthesis" (for statements connecting multiple ideas)
+
 ## 8. ANALOGIES & METAPHORS
 Every analogy or metaphor used to explain concepts.
 These are compression tools - capture them precisely as they help ideas stick.
