@@ -20,7 +20,7 @@ ON daily_digests USING GIN (keywords);
 
 -- 2. Create references table for cross-day tracking
 CREATE TABLE IF NOT EXISTS digest_references (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     reference_type TEXT NOT NULL,  -- 'book', 'paper', 'framework', 'concept', 'person', 'community'
     name TEXT NOT NULL,
     author TEXT,
@@ -54,7 +54,7 @@ CREATE TRIGGER update_digest_references_updated_at
 
 -- 3. Optional: Create subscribers table (if not managed by frontend)
 CREATE TABLE IF NOT EXISTS subscribers (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email TEXT UNIQUE NOT NULL,
     name TEXT,
     is_active BOOLEAN DEFAULT true,

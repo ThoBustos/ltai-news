@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS video_processed_data (
 
 -- 5. Daily Digests (The final newsletter output)
 CREATE TABLE IF NOT EXISTS daily_digests (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     publish_date DATE UNIQUE NOT NULL, -- Ensures one digest per day
     title TEXT NOT NULL,
     description TEXT,
