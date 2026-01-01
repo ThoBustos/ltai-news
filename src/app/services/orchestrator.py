@@ -280,40 +280,52 @@ class ContentOrchestrator:
             )
     
     async def _generate_digest(self, target_date: date) -> DigestResult:
-        """Generate digest for the target date (placeholder implementation).
-        
+        """Generate digest for the target date using the daily digest agent.
+
         Args:
             target_date: Date to generate digest for
-            
+
         Returns:
             DigestResult with generation statistics
         """
         started_at = datetime.now(timezone.utc)
         errors = []
-        
-        logger.info(f"Generating digest for {target_date} (placeholder implementation)")
-        
+
+        logger.info(f"Generating digest for {target_date}")
+
         try:
-            # Placeholder: Just count processed videos for this date
-            window = get_window(target_date)
-            videos = self.video_repo.get_videos_in_window(window)
-            processed_videos = [v for v in videos if v.status == VideoProcessingStatus.PROCESSED]
-            
+            # Import here to avoid circular imports
+            from app.agents.daily_digest import generate_daily_digest
+
+            # Run the daily digest workflow
+            result = await generate_daily_digest(target_date)
+
             completed_at = datetime.now(timezone.utc)
-            
-            return DigestResult(
-                digest_generated=len(processed_videos) > 0,
-                videos_included=len(processed_videos),
-                digest_id=None,  # Will be set when digest service is implemented
-                errors=errors,
-                started_at=started_at,
-                completed_at=completed_at,
-            )
-            
+
+            if result and result.success:
+                return DigestResult(
+                    digest_generated=True,
+                    videos_included=result.videos_included,
+                    digest_id=result.digest_id,
+                    errors=result.errors,
+                    started_at=started_at,
+                    completed_at=completed_at,
+                )
+            else:
+                errors.extend(result.errors if result else ["Digest generation returned no result"])
+                return DigestResult(
+                    digest_generated=False,
+                    videos_included=0,
+                    digest_id=None,
+                    errors=errors,
+                    started_at=started_at,
+                    completed_at=completed_at,
+                )
+
         except Exception as e:
             logger.error(f"Digest generation failed: {e}", exc_info=True)
             errors.append(f"Digest generation failed: {str(e)}")
-            
+
             return DigestResult(
                 digest_generated=False,
                 videos_included=0,
