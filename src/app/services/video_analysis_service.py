@@ -92,6 +92,21 @@ class VideoAnalysisService:
         except Exception as e:
             logger.error(f"Failed to get analysis for {video_id}: {e}")
             return None
+
+    async def delete_analysis(self, video_id: str) -> bool:
+        """Delete existing analysis for video.
+        
+        Args:
+            video_id: YouTube video ID
+            
+        Returns:
+            True if deleted successfully, False otherwise
+        """
+        try:
+            return await self.analysis_repo.delete_analysis(video_id)
+        except Exception as e:
+            logger.error(f"Failed to delete analysis for {video_id}: {e}")
+            return False
     
     async def get_videos_needing_analysis(self, limit: int = 100) -> list:
         """Get videos that need analysis (have transcripts but no analysis).
