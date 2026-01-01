@@ -52,6 +52,15 @@ class VideoAnalysisRepository:
                 "concepts_mentioned": analysis.concepts_mentioned,
                 "people_mentioned": analysis.people_mentioned,
                 "communities_mentioned": analysis.communities_mentioned,
+                # V2 fields
+                "teaser_hooks": analysis.teaser_hooks,
+                "keywords": analysis.keywords,
+                "direct_quotes": analysis.direct_quotes,
+                "analogies_metaphors": analysis.analogies_metaphors,
+                "frameworks_shared": analysis.frameworks_shared,
+                "statistics_data": analysis.statistics_data,
+                "section_analysis": analysis.section_analysis,
+                # Metadata
                 "metadata_extracted": analysis.metadata_extracted,
                 "input_tokens": analysis.input_tokens,
                 "output_tokens": analysis.output_tokens,
@@ -106,25 +115,34 @@ class VideoAnalysisRepository:
             row = result.data
 
             # Convert database row to Pydantic model
+            # NOTE: Supabase automatically deserializes JSONB columns to Python objects
+            # so we use values directly without json.loads()
             return VideoAnalysisComplete(
                 video_id=row['video_id'],
                 tldr=row.get('tldr', ''),
                 key_audience="",  # Not stored separately
-                core_topics=json.loads(row['core_topics']) if row.get('core_topics') else [],
-                lessons_learned=json.loads(row['lessons_learned']) if row.get('lessons_learned') else {},
+                teaser_hooks=row.get('teaser_hooks') or [],
+                keywords=row.get('keywords') or [],
+                core_topics=row.get('core_topics') or [],
+                lessons_learned=row.get('lessons_learned') or {},
                 detailed_insights=row.get('detailed_insights', ''),
-                sources_referenced=json.loads(row['sources_referenced']) if row.get('sources_referenced') else [],
-                concepts_mentioned=json.loads(row['concepts_mentioned']) if row.get('concepts_mentioned') else [],
-                people_mentioned=json.loads(row['people_mentioned']) if row.get('people_mentioned') else [],
-                communities_mentioned=json.loads(row['communities_mentioned']) if row.get('communities_mentioned') else [],
-                metadata_extracted=json.loads(row['metadata_extracted']) if row.get('metadata_extracted') else {},
+                sources_referenced=row.get('sources_referenced') or [],
+                concepts_mentioned=row.get('concepts_mentioned') or [],
+                people_mentioned=row.get('people_mentioned') or [],
+                communities_mentioned=row.get('communities_mentioned') or [],
+                direct_quotes=row.get('direct_quotes') or [],
+                analogies_metaphors=row.get('analogies_metaphors') or [],
+                frameworks_shared=row.get('frameworks_shared') or [],
+                statistics_data=row.get('statistics_data') or [],
+                section_analysis=row.get('section_analysis') or [],
+                metadata_extracted=row.get('metadata_extracted') or {},
                 input_tokens=row.get('input_tokens') or 0,
                 output_tokens=row.get('output_tokens') or 0,
                 total_tokens=row.get('total_tokens') or 0,
                 total_cost=float(row['total_cost']) if row.get('total_cost') else 0.0,
                 total_processing_time_seconds=float(row['total_processing_time_seconds']) if row.get('total_processing_time_seconds') else 0.0,
-                confidence_scores={},  # Would need to extract from metadata
-                processing_metadata=json.loads(row['processing_metadata']) if row.get('processing_metadata') else None,
+                confidence_scores={},
+                processing_metadata=row.get('processing_metadata'),
                 model_name=row.get('model_name') or "unknown",
                 processed_at=datetime.fromisoformat(row['processed_at']) if row.get('processed_at') else datetime.now(timezone.utc)
             )
@@ -205,6 +223,10 @@ class VideoAnalysisRepository:
         """Extract tags from analysis for the legacy tags field."""
         tags = []
 
+        # V2: Add keywords directly (most relevant tags)
+        if hasattr(analysis, 'keywords') and analysis.keywords:
+            tags.extend(analysis.keywords)
+
         # Add topic categories as tags
         for topic in analysis.core_topics:
             if isinstance(topic, dict):
@@ -218,8 +240,16 @@ class VideoAnalysisRepository:
                 if concept_name:
                     tags.append(concept_name)
 
-        # Remove duplicates and limit to reasonable number
-        return list(set(tags))[:15]
+        # V2: Add framework names
+        if hasattr(analysis, 'frameworks_shared'):
+            for framework in analysis.frameworks_shared:
+                if isinstance(framework, dict):
+                    fw_name = framework.get('name', '').lower().replace(' ', '-')
+                    if fw_name:
+                        tags.append(fw_name)
+
+        # Remove duplicates and limit (increased from 15 to 20 for V2)
+        return list(set(tags))[:20]
 
     async def get_processing_stats(self, date_filter: Optional[datetime] = None) -> Dict[str, Any]:
         """Get processing statistics for monitoring.
