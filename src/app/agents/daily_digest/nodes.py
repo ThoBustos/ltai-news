@@ -326,7 +326,7 @@ Your response must be valid JSON only, no additional text."""
 
         # Add metadata to Opik span if available
         try:
-            current_span = opik.get_current_span()
+            current_span = opik.get_current_span()  # type: ignore[attr-defined]
             if current_span:
                 current_span.update(
                     metadata={

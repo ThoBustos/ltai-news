@@ -10,7 +10,7 @@ class DailyDigestPrompts:
     CURRENT_VERSION = "2.0"
 
     @staticmethod
-    def get_digest_generation_prompt() -> opik.ChatPrompt:
+    def get_digest_generation_prompt() -> Any:  # Returns opik.ChatPrompt (not typed)
         """Get the master prompt for generating daily digests - V2.
 
         Returns:
@@ -174,7 +174,7 @@ QUALITY STANDARDS:
             }
         )
 
-    @staticmethod
+    @staticmethod  # type: ignore[arg-type]
     def format_video_context(video_data: Dict[str, Any]) -> str:
         """Format a single video's data into context for the prompt - V2.
 
@@ -369,7 +369,7 @@ COMMUNITIES & EVENTS:
 ----- END VIDEO -----
 """
 
-    @staticmethod
+    @staticmethod  # type: ignore[arg-type]
     def format_all_videos_context(videos: List[Dict[str, Any]]) -> Tuple[str, str]:
         """Format all videos into context string and channel list.
 
