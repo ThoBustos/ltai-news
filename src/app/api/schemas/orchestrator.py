@@ -94,3 +94,15 @@ class DigestContentResponse(BaseModel):
     channels: Optional[List[str]] = None
     is_sent: bool = False
     sent_at: Optional[str] = None
+
+
+class ReprocessFailedResponse(BaseModel):
+    """Response for reprocessing failed videos."""
+
+    message: str
+    target_date: str
+    status: str
+    videos_found: int = 0
+    videos_reprocessed: int = 0
+    analyses_completed: int = 0
+    errors: List[str] = []
