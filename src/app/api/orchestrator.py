@@ -13,6 +13,10 @@ from app.api.schemas.orchestrator import (
     BackfillResponse,
     TranscriptExtractionResponse,
     VideoAnalysisResponse,
+    DigestGenerationResponse,
+    DigestSendRequest,
+    DigestSendResponse,
+    DigestContentResponse,
 )
 
 router = APIRouter(prefix="/api/orchestrator", tags=["orchestrator"])
@@ -456,7 +460,7 @@ async def get_analysis_stats(days: int = 30):
 async def health_check():
     """
     Health check endpoint for orchestrator service.
-    
+
     Returns:
         Simple health status
     """
@@ -465,3 +469,292 @@ async def health_check():
         "service": "orchestrator",
         "message": "Orchestrator service is operational"
     }
+
+
+# ========== Daily Digest Endpoints ==========
+
+@router.post("/generate-digest/{date_str}", response_model=DigestGenerationResponse)
+async def generate_digest(date_str: str) -> DigestGenerationResponse:
+    """
+    Generate a daily digest for a specific date.
+
+    This endpoint triggers the daily digest workflow:
+    1. Loads all video analyses for the target date
+    2. Generates cohesive newsletter content via LLM
+    3. Saves digest with markdown/HTML to database
+    4. Extracts and upserts references for cross-day tracking
+
+    Args:
+        date_str: Date in YYYY-MM-DD format
+
+    Returns:
+        DigestGenerationResponse with generation results
+    """
+    logger.info(f"API request to generate digest for {date_str}")
+
+    try:
+        # Parse date
+        target_date = parse_date(date_str)
+
+        # Import here to avoid circular imports
+        from app.agents.daily_digest import generate_daily_digest
+
+        # Generate digest
+        result = await generate_daily_digest(target_date)
+
+        if result and result.success:
+            return DigestGenerationResponse(
+                message=f"Digest generated successfully for {date_str}",
+                target_date=date_str,
+                status="completed",
+                result=result
+            )
+        else:
+            return DigestGenerationResponse(
+                message=f"Digest generation failed for {date_str}",
+                target_date=date_str,
+                status="failed",
+                result=result
+            )
+
+    except ValueError as e:
+        logger.error(f"Invalid date format: {date_str}: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
+    except Exception as e:
+        logger.error(f"Digest generation failed for {date_str}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Digest generation failed: {str(e)}")
+
+
+@router.post("/generate-digest/{date_str}/async")
+async def generate_digest_async(date_str: str, background_tasks: BackgroundTasks):
+    """
+    Generate a daily digest asynchronously in the background.
+
+    Args:
+        date_str: Date in YYYY-MM-DD format
+        background_tasks: FastAPI background tasks
+
+    Returns:
+        Immediate response while digest generation runs in background
+    """
+    logger.info(f"API request to generate digest async for {date_str}")
+
+    try:
+        # Parse date to validate format
+        target_date = parse_date(date_str)
+
+        # Add digest generation task to background
+        async def run_digest_generation():
+            from app.agents.daily_digest import generate_daily_digest
+            result = await generate_daily_digest(target_date)
+            if result and result.success:
+                logger.info(f"Background digest generation completed for {date_str}: {result.digest_id}")
+            else:
+                logger.error(f"Background digest generation failed for {date_str}")
+
+        background_tasks.add_task(run_digest_generation)
+
+        return {
+            "message": f"Digest generation started in background for {date_str}",
+            "target_date": date_str,
+            "status": "started",
+            "note": "Check /api/orchestrator/digest/{date} to see the result"
+        }
+
+    except ValueError as e:
+        logger.error(f"Invalid date format: {date_str}: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
+    except Exception as e:
+        logger.error(f"Failed to start background digest generation for {date_str}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to start digest generation: {str(e)}")
+
+
+@router.get("/digest/{date_str}", response_model=DigestContentResponse)
+async def get_digest(date_str: str) -> DigestContentResponse:
+    """
+    Get the digest content for a specific date.
+
+    Args:
+        date_str: Date in YYYY-MM-DD format
+
+    Returns:
+        DigestContentResponse with digest content
+    """
+    logger.debug(f"API request for digest content for {date_str}")
+
+    try:
+        # Parse date
+        target_date = parse_date(date_str)
+
+        # Get digest from repository
+        from app.repositories.daily_digest_repository import DailyDigestRepository
+        digest_repo = DailyDigestRepository()
+
+        digest = await digest_repo.get_digest_by_date(target_date)
+
+        if not digest:
+            return DigestContentResponse(
+                message=f"No digest found for {date_str}",
+                target_date=date_str,
+            )
+
+        return DigestContentResponse(
+            message=f"Digest found for {date_str}",
+            target_date=date_str,
+            digest_id=str(digest.id) if digest.id else None,
+            title=digest.title,
+            content_json=digest.content_json,
+            markdown=digest.formatted_markdown,
+            html=digest.formatted_html,
+            video_count=digest.video_count,
+            channels=digest.channels_included,
+            is_sent=digest.is_sent,
+            sent_at=digest.sent_at.isoformat() if digest.sent_at else None
+        )
+
+    except ValueError as e:
+        logger.error(f"Invalid date format: {date_str}: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
+    except Exception as e:
+        logger.error(f"Failed to get digest for {date_str}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get digest: {str(e)}")
+
+
+@router.post("/send-digest/{date_str}", response_model=DigestSendResponse)
+async def send_digest(date_str: str, request: DigestSendRequest = None) -> DigestSendResponse:
+    """
+    Send a digest email for a specific date.
+
+    If test_email is provided, sends only to that email.
+    Otherwise, sends to all active subscribers.
+
+    Args:
+        date_str: Date in YYYY-MM-DD format
+        request: Optional send request with test_email
+
+    Returns:
+        DigestSendResponse with send results
+    """
+    logger.info(f"API request to send digest for {date_str}")
+
+    try:
+        # Parse date
+        target_date = parse_date(date_str)
+
+        # Get digest from repository
+        from app.repositories.daily_digest_repository import DailyDigestRepository
+        from app.services.email_service import EmailService
+
+        digest_repo = DailyDigestRepository()
+        email_service = EmailService()
+
+        digest = await digest_repo.get_digest_by_date(target_date)
+
+        if not digest:
+            raise HTTPException(status_code=404, detail=f"No digest found for {date_str}")
+
+        digest_id = str(digest.id) if digest.id else None
+        if not digest_id:
+            raise HTTPException(status_code=400, detail="Digest has no ID")
+
+        # Send email
+        if request and request.test_email:
+            result = await email_service.send_test_digest(digest_id, request.test_email)
+        else:
+            result = await email_service.send_digest_to_subscribers(digest_id)
+
+        if result.success:
+            return DigestSendResponse(
+                message=f"Digest sent successfully for {date_str}",
+                digest_id=digest_id,
+                status="sent",
+                result=result
+            )
+        else:
+            return DigestSendResponse(
+                message=f"Digest send failed for {date_str}",
+                digest_id=digest_id,
+                status="failed",
+                result=result
+            )
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        logger.error(f"Invalid date format: {date_str}: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
+    except Exception as e:
+        logger.error(f"Failed to send digest for {date_str}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to send digest: {str(e)}")
+
+
+@router.get("/references/top")
+async def get_top_references(reference_type: str = None, limit: int = 20):
+    """
+    Get top referenced items across all digests.
+
+    Args:
+        reference_type: Optional filter by type (book, concept, framework, person, community)
+        limit: Maximum number of references to return (default: 20)
+
+    Returns:
+        List of top references sorted by mention count
+    """
+    try:
+        from app.repositories.daily_digest_repository import DailyDigestRepository
+        digest_repo = DailyDigestRepository()
+
+        references = await digest_repo.get_top_references(
+            reference_type=reference_type,
+            limit=limit
+        )
+
+        return {
+            "status": "success",
+            "reference_type": reference_type,
+            "count": len(references),
+            "references": [
+                {
+                    "name": ref.name,
+                    "type": ref.reference_type,
+                    "author": ref.author,
+                    "url": ref.url,
+                    "description": ref.description,
+                    "mention_count": ref.mention_count,
+                    "first_seen": ref.first_seen_date.isoformat() if ref.first_seen_date else None,
+                }
+                for ref in references
+            ]
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get top references: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get references: {str(e)}")
+
+
+@router.get("/references/search/{name}")
+async def search_reference(name: str):
+    """
+    Search for a reference and get its cross-day history.
+
+    Args:
+        name: Name of the reference to search for
+
+    Returns:
+        Reference history showing all mentions across digests
+    """
+    try:
+        from app.repositories.daily_digest_repository import DailyDigestRepository
+        digest_repo = DailyDigestRepository()
+
+        history = await digest_repo.get_reference_history(name)
+
+        return {
+            "status": "success",
+            "search_term": name,
+            "results": history
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to search reference {name}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to search reference: {str(e)}")

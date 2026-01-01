@@ -6,6 +6,10 @@ from app.api.schemas.orchestrator import (
     BackfillResponse,
     TranscriptExtractionResponse,
     VideoAnalysisResponse,
+    DigestGenerationResponse,
+    DigestSendRequest,
+    DigestSendResponse,
+    DigestContentResponse,
 )
 
 __all__ = [
@@ -14,4 +18,8 @@ __all__ = [
     "BackfillResponse",
     "TranscriptExtractionResponse",
     "VideoAnalysisResponse",
+    "DigestGenerationResponse",
+    "DigestSendRequest",
+    "DigestSendResponse",
+    "DigestContentResponse",
 ]
