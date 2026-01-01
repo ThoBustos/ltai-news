@@ -17,6 +17,7 @@ from app.api.schemas.orchestrator import (
     DigestSendRequest,
     DigestSendResponse,
     DigestContentResponse,
+    ReprocessFailedResponse,
 )
 
 router = APIRouter(prefix="/api/orchestrator", tags=["orchestrator"])
@@ -428,6 +429,110 @@ async def process_single_video_async(video_id: str, background_tasks: Background
     except Exception as e:
         logger.error(f"Failed to start background video analysis for {video_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to start video analysis: {str(e)}")
+
+
+@router.post("/reprocess-failed/{date_str}", response_model=ReprocessFailedResponse)
+async def reprocess_failed_videos(date_str: str) -> ReprocessFailedResponse:
+    """
+    Reprocess videos that failed analysis for a specific date.
+    
+    This endpoint:
+    1. Finds all failed videos for the target date
+    2. Deletes their existing analysis data (if any)
+    3. Resets their status back to 'collected'
+    4. Runs the analysis pipeline on them
+    
+    Args:
+        date_str: Date in YYYY-MM-DD format
+        
+    Returns:
+        ReprocessFailedResponse with reprocessing results
+    """
+    logger.info(f"API request to reprocess failed videos for {date_str}")
+    
+    try:
+        # Parse date
+        target_date = parse_date(date_str)
+        
+        # Initialize orchestrator
+        orchestrator = ContentOrchestrator()
+        
+        # Get count of failed videos before reprocessing
+        from app.repositories.video_repository import VideoRepository
+        video_repo = VideoRepository()
+        failed_videos = video_repo.get_failed_videos(target_date)
+        videos_found = len(failed_videos)
+        
+        # Reprocess failed videos
+        result = await orchestrator.reprocess_failed_videos(target_date)
+        
+        return ReprocessFailedResponse(
+            message=f"Reprocessed failed videos for {date_str}",
+            target_date=date_str,
+            status="completed" if result.analyses_completed > 0 else "no_videos" if videos_found == 0 else "failed",
+            videos_found=videos_found,
+            videos_reprocessed=result.videos_processed,
+            analyses_completed=result.analyses_completed,
+            errors=result.errors
+        )
+        
+    except ValueError as e:
+        logger.error(f"Invalid date format: {date_str}: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
+    except Exception as e:
+        logger.error(f"Failed to reprocess videos for {date_str}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Reprocessing failed: {str(e)}")
+
+
+@router.post("/reprocess-failed/{date_str}/async")
+async def reprocess_failed_videos_async(date_str: str, background_tasks: BackgroundTasks):
+    """
+    Reprocess failed videos asynchronously in the background.
+    
+    Args:
+        date_str: Date in YYYY-MM-DD format
+        background_tasks: FastAPI background tasks
+        
+    Returns:
+        Immediate response while reprocessing runs in background
+    """
+    logger.info(f"API request to reprocess failed videos async for {date_str}")
+    
+    try:
+        # Parse date to validate format
+        target_date = parse_date(date_str)
+        
+        # Get count of failed videos
+        from app.repositories.video_repository import VideoRepository
+        video_repo = VideoRepository()
+        failed_videos = video_repo.get_failed_videos(target_date)
+        videos_found = len(failed_videos)
+        
+        # Add reprocessing task to background
+        async def run_reprocessing():
+            orchestrator = ContentOrchestrator()
+            result = await orchestrator.reprocess_failed_videos(target_date)
+            logger.info(
+                f"Background reprocessing completed for {date_str}: "
+                f"{result.analyses_completed}/{result.videos_processed} successful"
+            )
+        
+        background_tasks.add_task(run_reprocessing)
+        
+        return {
+            "message": f"Reprocessing started in background for {date_str}",
+            "target_date": date_str,
+            "videos_found": videos_found,
+            "status": "started",
+            "note": "Check logs for completion status"
+        }
+        
+    except ValueError as e:
+        logger.error(f"Invalid date format: {date_str}: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
+    except Exception as e:
+        logger.error(f"Failed to start background reprocessing for {date_str}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to start reprocessing: {str(e)}")
 
 
 @router.get("/analysis/stats")
