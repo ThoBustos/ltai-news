@@ -265,7 +265,22 @@ open http://localhost:8000/docs
 > **Styling & Resend:**  
 > Emails are generated as **HTML** in Python.  
 > Light styling (basic layout, typography) is done in the email template.  
-> The main “beautiful UI” lives on the website (thomasbustos.com) which reads from Supabase.
+> The main "beautiful UI" lives on the website (thomasbustos.com) which reads from Supabase.
+
+---
+
+## Security
+
+This project uses **Row Level Security (RLS)** to protect the database. See **[SECURITY.md](./SECURITY.md)** for full documentation including:
+
+- Architecture diagrams (frontend vs backend access)
+- Authentication vs Authorization (CS fundamentals)
+- RLS policy explanation and configuration
+- The two Supabase keys (`anon` vs `service_role`)
+- Defense in depth security model
+- Guidelines for contributors adding new tables
+
+**Quick summary:** Only `daily_digests` is publicly readable. All other tables (including `subscribers`) are locked down to backend-only access.
 
 ---
 
@@ -303,3 +318,56 @@ ltai-news/
   ops/
     env.example             # example env vars
     postman_collection.json # (optional) API testing
+```
+
+---
+
+## Technical Notes & Learnings
+
+### Gemini Structured Output for Reliable LLM Generation
+
+**Problem:** Daily digest generation was producing incomplete outputs - only 4 of 13 video sections would be generated, with missing `deep_analysis` and `key_quotes` fields.
+
+**Initial hypothesis:** Context window or output token limits.
+
+**Actual root cause:** Model "laziness" and lack of schema enforcement.
+
+**Solution (3 lines of code):**
+
+```python
+# Before (unreliable)
+config=GenerateContentConfig(
+    systemInstruction=system_content,
+    temperature=1.0,
+)
+
+# After (reliable)
+config=GenerateContentConfig(
+    systemInstruction=system_content,
+    temperature=0.2,  # Low for deterministic output
+    response_mime_type="application/json",  # Force JSON mode
+    response_schema=DigestContentResponse.model_json_schema(),  # Enforce ALL fields
+)
+```
+
+**Key learnings:**
+
+1. **Gemini Flash supports 64K output tokens** - truncation was NOT the issue. 13 videos × 700 tokens = ~9,100 tokens (well under limit).
+
+2. **High temperature (1.0) causes non-deterministic outputs** - the model would "skip" fields randomly. Lowering to 0.2 made outputs consistent.
+
+3. **`response_schema` is critical** - it forces Gemini to populate ALL required fields in your Pydantic model. Without it, the model may "be lazy" and omit fields.
+
+4. **Structured output eliminates JSON parsing** - no need for manual extraction of JSON from markdown code blocks. The response is guaranteed valid JSON. (idk why models tend to love to try to parse jsons instead of using existing structured outputs existing logics.)
+
+**Results:**
+
+| Metric | Before | After |
+|--------|--------|-------|
+| Video sections | 4/13 (31%) | **13/13 (100%)** |
+| deep_analysis | Often empty | 100-137 words each |
+| key_quotes | Often missing | 2 per video |
+| Cost | Unknown | **$0.006** |
+| Reliability | Inconsistent | **Deterministic** |
+
+**Reference:** `src/app/agents/daily_digest/nodes.py:249-260`
