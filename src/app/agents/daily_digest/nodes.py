@@ -246,14 +246,16 @@ Your response must be valid JSON only, no additional text."""
         client = _get_genai_client()
         model_name = settings.analysis_model_name
 
-        # Make LLM call
+        # Make LLM call with structured output enforcement
         start_time = time.time()
         response = client.models.generate_content(
             model=model_name,
             contents=user_content,
             config=GenerateContentConfig(
                 systemInstruction=system_content,
-                temperature=1.0,
+                temperature=0.2,  # Low for deterministic structured output
+                response_mime_type="application/json",
+                response_schema=DigestContentResponse.model_json_schema(),
             )
         )
         processing_time = time.time() - start_time
@@ -267,19 +269,8 @@ Your response must be valid JSON only, no additional text."""
         # Calculate cost
         cost = _calculate_cost(input_tokens, output_tokens)
 
-        # Parse JSON response
-        response_text = (response.text or "").strip()
-        if response_text.startswith('```json'):
-            response_text = response_text.replace('```json', '').replace('```', '').strip()
-        elif response_text.startswith('```'):
-            response_text = response_text.replace('```', '').strip()
-
-        if '{' in response_text:
-            start_idx = response_text.find('{')
-            end_idx = response_text.rfind('}') + 1
-            response_text = response_text[start_idx:end_idx]
-
-        digest_content = DigestContentResponse.model_validate_json(response_text)
+        # Parse JSON response - structured output guarantees valid JSON matching schema
+        digest_content = DigestContentResponse.model_validate_json(response.text)
 
         # Ensure stats are populated correctly
         if not digest_content.stats.channels and channel_stats:
