@@ -15,6 +15,10 @@ class ChannelStat(BaseModel):
     channel_name: str
     video_count: int
     thumbnail_url: Optional[str] = None
+    channel_url: str = Field(
+        default="",
+        description="YouTube channel URL - populated programmatically from channel_id"
+    )
 
 
 class DigestStats(BaseModel):
@@ -28,6 +32,23 @@ class DigestStats(BaseModel):
 # GoldenNugget removed in V2 - VideoSection now has depth fields directly
 
 
+class Speaker(BaseModel):
+    """Speaker with optional social links - only from video context."""
+    name: str = Field(description="Speaker name")
+    twitter_url: Optional[str] = Field(
+        default=None,
+        description="Twitter/X URL ONLY if found in video context"
+    )
+    youtube_url: Optional[str] = Field(
+        default=None,
+        description="YouTube channel URL ONLY if found in video context"
+    )
+    linkedin_url: Optional[str] = Field(
+        default=None,
+        description="LinkedIn URL ONLY if found in video context"
+    )
+
+
 class VideoSection(BaseModel):
     """Section for a single video in the digest - V2."""
     video_id: str
@@ -35,8 +56,20 @@ class VideoSection(BaseModel):
     channel_name: str
     # thumbnail_url removed in V2 - text-focused digest
     duration_minutes: int = Field(description="Video duration in minutes")
-    speakers: List[str] = Field(default_factory=list, description="Main speakers if identifiable")
+    speakers: List[Speaker] = Field(
+        default_factory=list,
+        description="Main speakers with social links from video context only"
+    )
     tags: List[str] = Field(default_factory=list, description="3-5 topic tags for categorization")
+
+    # V2.2: Logical flow - intellectual journey (NO ARROWS - frontend adds them)
+    logical_flow: List[str] = Field(
+        default_factory=list,
+        description="4-6 concepts in sequence showing intellectual journey. "
+        "NOT buzzwords. NO ARROWS in data (frontend renders arrows between items). "
+        "Example: ['Problem: context collapse', '700k token evidence', "
+        "'Agentic RAG proposal', 'Sub-agent constraints']"
+    )
 
     # Core summary
     condensed_summary: str = Field(
@@ -78,19 +111,77 @@ class VideoSection(BaseModel):
     video_url: str
 
 
+# === V2 Cross-Video Analysis Models ===
+
+class TensionPerspective(BaseModel):
+    """One side of a key tension between videos."""
+    position: str = Field(description="The viewpoint or stance")
+    video_id: str = Field(description="Video ID for linking")
+    video_title: str = Field(description="Video title for display")
+    speaker: Optional[str] = Field(default=None, description="Speaker name if known")
+
+
+class ConvergencePoint(BaseModel):
+    """Concept mentioned by multiple videos - shows field consensus."""
+    concept: str = Field(description="The shared concept or theme")
+    video_ids: List[str] = Field(description="List of video IDs that mention this")
+    video_titles: List[str] = Field(description="Video titles for display")
+    synthesis: str = Field(
+        description="How these videos together illuminate the concept. "
+        "2-3 sentences connecting their perspectives."
+    )
+
+
+class KeyTension(BaseModel):
+    """Where videos disagree or offer different perspectives."""
+    topic: str = Field(description="The contested topic or question")
+    perspectives: List[TensionPerspective] = Field(
+        description="Different viewpoints from different videos"
+    )
+    resolution: Optional[str] = Field(
+        default=None,
+        description="How to reconcile the tension, if possible. "
+        "Can be None if tension is unresolved."
+    )
+
+
 class ContrarianCorner(BaseModel):
     """One counterintuitive insight from the day's content."""
     insight: str = Field(description="The counterintuitive idea")
-    source_video_id: str
+    source_video_id: str = Field(description="Video ID for linking")
+    source_video_title: str = Field(
+        default="",
+        description="Video title for display and attribution"
+    )
     why_counterintuitive: str = Field(description="Why this challenges common wisdom")
+    so_what: str = Field(
+        default="",
+        description="What should the reader do differently based on this insight? "
+        "Concrete, actionable implication. "
+        "Example: 'When evaluating AI tools, look for benchmarks that include impossible cases.'"
+    )
 
 
 class ActionItem(BaseModel):
     """Concrete action item derived from the day's insights."""
-    action: str = Field(description="What to do")
+    action: str = Field(description="What to do (imperative)")
     context: str = Field(description="Why/how it connects to today's insights")
     difficulty: Literal["quick", "medium", "deep-dive"] = Field(
         description="Effort level required"
+    )
+    # V2: Source attribution and concrete first step
+    source_video_id: str = Field(
+        default="",
+        description="Video ID for linking to relevant section"
+    )
+    source_video_title: str = Field(
+        default="",
+        description="Video title for attribution"
+    )
+    first_step: str = Field(
+        default="",
+        description="Concrete first step to take (not abstract). "
+        "Example: 'Run your RAG at 50%, 70%, 90% utilization. Measure retrieval accuracy.'"
     )
 
 
@@ -101,6 +192,12 @@ class ReferenceItem(BaseModel):
     url: Optional[str] = None
     description: Optional[str] = None
     source_video_id: Optional[str] = None
+    # V2: Social links for people/orgs
+    social_links: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Social links for people/orgs: "
+        "{'twitter': '@handle', 'linkedin': 'url', 'website': 'url'}"
+    )
 
 
 class ReferencesIndex(BaseModel):
@@ -128,7 +225,45 @@ class DigestContentResponse(BaseModel):
     )
 
     stats: DigestStats = Field(description="Video count, duration, read time, and channels breakdown")
-    daily_tldr: str = Field(description="3-4 paragraphs bridging all concepts, non-obvious connections")
+
+    # === V2: Layered Overview (NEW) ===
+    big_picture_bullets: List[str] = Field(
+        default_factory=list,
+        description="1-2 bullets per video for 30-second skim. "
+        "Each is ONE complete insight with specific numbers/names. "
+        "Can merge concepts from multiple videos. "
+        "Format: '**Key term** — insight with [entity link](url) when available in context'"
+    )
+
+    deeper_picture: str = Field(
+        default="",
+        description="2-6 paragraphs connecting concepts across videos (scales with video count: "
+        "1-3 videos → 2-3 paragraphs, 4-7 videos → 3-4 paragraphs, 8+ videos → 4-6 paragraphs). "
+        "Use **bold** for key terms. "
+        "Pattern: 'Video A introduces X. Video B shows why X fails.' "
+        "EMBED video links inline: *[Video Title](video_url)* - every video title should be clickable. "
+        "DO NOT list sources separately at the beginning."
+    )
+
+    # === V2: Cross-Video Analysis (NEW) ===
+    convergence_points: List[ConvergencePoint] = Field(
+        default_factory=list,
+        description="Concepts mentioned by 2+ videos showing field consensus. "
+        "Empty list is valid if no genuine convergence exists. Do NOT force connections."
+    )
+
+    key_tensions: List[KeyTension] = Field(
+        default_factory=list,
+        description="Where videos disagree or offer different perspectives. "
+        "Empty list is valid if no genuine disagreement exists. Do NOT invent tensions."
+    )
+
+    # Legacy field - keep for backwards compat
+    daily_tldr: str = Field(
+        default="",
+        description="Legacy field - keep for backwards compat. "
+        "Can be empty if big_picture_bullets is populated."
+    )
     video_sections: List[VideoSection] = Field(description="Per-video content sections with V2 depth")
     contrarian_corner: ContrarianCorner = Field(description="One counterintuitive insight")
     action_items: List[ActionItem] = Field(description="3-5 concrete things to do")

@@ -30,12 +30,26 @@ class PersonMention(BaseModel):
     name: str = Field(description="Person's name")
     role: Optional[str] = Field(None, description="Their role or title")
     affiliation: Optional[str] = Field(None, description="Organization or company")
+    context: Optional[str] = Field(None, description="Why they're mentioned in this video")
+    # V2: Social links - ONLY include if explicitly mentioned in video/description
+    social_links: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Social links ONLY if explicitly mentioned: "
+        "{'twitter': '@handle', 'linkedin': 'url', 'website': 'url'}. "
+        "Do NOT guess handles or URLs."
+    )
 
 class CommunityMention(BaseModel):
     """Community, event, or organization mentioned."""
     name: str = Field(description="Community or organization name")
-    type: Literal["discord", "community", "event", "organization"] = Field(description="Type of mention")
-    url: Optional[str] = Field(None, description="URL if available")
+    type: Literal["discord", "community", "event", "organization", "podcast", "newsletter", "course"] = Field(
+        description="Type of mention"
+    )
+    description: Optional[str] = Field(None, description="Brief description")
+    url: Optional[str] = Field(
+        None,
+        description="URL ONLY if explicitly mentioned in video/description. Do NOT guess URLs."
+    )
 
 
 # === V2 EXTRACTION MODELS ===

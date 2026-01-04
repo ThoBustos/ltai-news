@@ -5,12 +5,16 @@ import json
 from datetime import datetime, timezone, date
 
 import opik
-from google import genai
 from google.genai.types import GenerateContentConfig
 
 from app.core.logging import logger
 from app.config.settings import settings
 from app.core.utils.time_window import get_window, parse_date
+from app.core.utils.llm_client import (
+    get_genai_client,
+    extract_token_usage,
+    parse_llm_json,
+)
 from app.models.daily_digest import DigestContentResponse, DigestMetrics
 from app.repositories.video_repository import VideoRepository
 from app.repositories.video_analysis_repository import VideoAnalysisRepository
@@ -19,22 +23,6 @@ from app.repositories.daily_digest_repository import DailyDigestRepository
 from app.agents.daily_digest.state import DailyDigestState
 from app.agents.daily_digest.prompts import DailyDigestPrompts
 from app.agents.daily_digest.formatters import format_digest_markdown, format_digest_html
-
-# Gemini Flash pricing (same as video_analyzer)
-GEMINI_FLASH_INPUT_PRICE_PER_1M = 0.075   # $0.075 per 1M input tokens
-GEMINI_FLASH_OUTPUT_PRICE_PER_1M = 0.30    # $0.30 per 1M output tokens
-
-
-def _get_genai_client():
-    """Get Google GenAI client for LLM calls."""
-    return genai.Client(api_key=settings.google_api_key)
-
-
-def _calculate_cost(input_tokens: int, output_tokens: int) -> float:
-    """Calculate cost in USD from token counts using Gemini Flash pricing."""
-    input_cost = (input_tokens / 1_000_000) * GEMINI_FLASH_INPUT_PRICE_PER_1M
-    output_cost = (output_tokens / 1_000_000) * GEMINI_FLASH_OUTPUT_PRICE_PER_1M
-    return input_cost + output_cost
 
 
 def _calculate_read_time(content: DigestContentResponse) -> int:
@@ -243,10 +231,10 @@ Your response must be valid JSON only, no additional text."""
         user_content += schema_instruction
 
         # Get GenAI client
-        client = _get_genai_client()
+        client = get_genai_client()
         model_name = settings.analysis_model_name
 
-        # Make LLM call with structured output enforcement
+        # Make LLM call
         start_time = time.time()
         response = client.models.generate_content(
             model=model_name,
@@ -254,23 +242,15 @@ Your response must be valid JSON only, no additional text."""
             config=GenerateContentConfig(
                 systemInstruction=system_content,
                 temperature=0.2,  # Low for deterministic structured output
-                response_mime_type="application/json",
-                response_schema=DigestContentResponse.model_json_schema(),
             )
         )
         processing_time = time.time() - start_time
 
-        # Extract token counts
-        usage = response.usage_metadata
-        input_tokens = (usage.prompt_token_count or 0) if usage else 0
-        output_tokens = (usage.candidates_token_count or 0) if usage else 0
-        total_tokens = (usage.total_token_count or 0) if usage else (input_tokens + output_tokens)
+        # Extract token usage and cost using shared utility
+        usage = extract_token_usage(response)
 
-        # Calculate cost
-        cost = _calculate_cost(input_tokens, output_tokens)
-
-        # Parse JSON response - structured output guarantees valid JSON matching schema
-        digest_content = DigestContentResponse.model_validate_json(response.text)
+        # Parse JSON response using shared utility (handles markdown fences)
+        digest_content = parse_llm_json(response.text, DigestContentResponse)
 
         # Ensure stats are populated correctly
         if not digest_content.stats.channels and channel_stats:
@@ -281,12 +261,18 @@ Your response must be valid JSON only, no additional text."""
                     channel_name=cs["channel_name"],
                     video_count=cs["video_count"],
                     thumbnail_url=cs.get("thumbnail_url"),
+                    channel_url=f"https://youtube.com/channel/{cs['channel_id']}",
                 )
                 for cs in channel_stats.values()
             ]
             digest_content.stats.video_count = len(video_analyses)
             total_duration = sum(cs.get("total_duration_seconds", 0) for cs in channel_stats.values())
             digest_content.stats.total_duration_minutes = total_duration // 60
+
+        # V2.2: Ensure channel_url is always populated (even if LLM generated stats)
+        for channel in digest_content.stats.channels:
+            if not channel.channel_url and channel.channel_id:
+                channel.channel_url = f"https://youtube.com/channel/{channel.channel_id}"
 
         # V2: Calculate read time if not set
         if not digest_content.stats.estimated_read_minutes:
@@ -302,9 +288,9 @@ Your response must be valid JSON only, no additional text."""
             workflow_version="2.0",
             started_at=datetime.now(timezone.utc),
             completed_at=datetime.now(timezone.utc),
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_cost=cost,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            total_cost=usage.cost_usd,
             processing_time_seconds=processing_time,
             videos_analyzed=len(video_analyses),
             references_extracted=0,  # Will be set in save_results
@@ -324,9 +310,9 @@ Your response must be valid JSON only, no additional text."""
                         "prompt_name": "daily-digest-generation",
                         "confidence_score": digest_content.confidence_score,
                         "videos_count": len(video_analyses),
-                        "tokens_input": input_tokens,
-                        "tokens_output": output_tokens,
-                        "cost_usd": cost,
+                        "tokens_input": usage.input_tokens,
+                        "tokens_output": usage.output_tokens,
+                        "cost_usd": usage.cost_usd,
                         "processing_time_seconds": processing_time,
                     }
                 )
@@ -334,7 +320,7 @@ Your response must be valid JSON only, no additional text."""
             pass
 
         logger.info(
-            f"Digest generation completed: {total_tokens} tokens, ${cost:.6f}, {processing_time:.2f}s"
+            f"Digest generation completed: {usage.total_tokens} tokens, ${usage.cost_usd:.6f}, {processing_time:.2f}s"
         )
 
         return state

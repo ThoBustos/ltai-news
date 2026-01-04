@@ -1,4 +1,14 @@
-"""Formatters for rendering digest content to Markdown and HTML - V2.0.
+"""Formatters for rendering digest content to Markdown and HTML - V2.1.
+
+V2.1 Changes:
+- Added big_picture_bullets section (30-second skim)
+- Added deeper_picture section (3-5 min read)
+- Added convergence_points section (cross-video consensus)
+- Added key_tensions section (cross-video disagreements)
+- Added logical_flow per video (intellectual journey)
+- Enhanced contrarian_corner with so_what
+- Enhanced action_items with first_step
+- Added social_links support for references
 
 V2 Changes:
 - Zero emojis throughout
@@ -19,6 +29,8 @@ from app.models.daily_digest import (
     ContrarianCorner,
     ReferencesIndex,
     ReferenceItem,
+    ConvergencePoint,
+    KeyTension,
 )
 
 
@@ -59,13 +71,62 @@ def format_digest_markdown(content: DigestContentResponse, target_date: date) ->
         lines.append(f"{i+1}. [{toc_item}](#{slug})")
     lines.append("")
 
-    # Daily TLDR / Overview
-    lines.append("---")
-    lines.append("")
-    lines.append("## Overview")
-    lines.append("")
-    lines.append(content.daily_tldr)
-    lines.append("")
+    # V2.1: Big Picture Bullets (30-second skim)
+    if content.big_picture_bullets:
+        lines.append("---")
+        lines.append("")
+        lines.append("## The Big Picture")
+        lines.append("")
+        for bullet in content.big_picture_bullets:
+            lines.append(f"- {bullet}")
+        lines.append("")
+
+    # V2.1: Deeper Picture (3-5 min read)
+    if content.deeper_picture:
+        lines.append("---")
+        lines.append("")
+        lines.append("## The Deeper Picture")
+        lines.append("")
+        lines.append(content.deeper_picture)
+        lines.append("")
+
+    # V2.1: Convergence Points (cross-video consensus)
+    if content.convergence_points:
+        lines.append("---")
+        lines.append("")
+        lines.append("## Where Videos Converge")
+        lines.append("")
+        for cp in content.convergence_points:
+            video_refs = ", ".join([f"*{t}*" for t in cp.video_titles])
+            lines.append(f"**{cp.concept}** ({video_refs})")
+            lines.append("")
+            lines.append(f"> {cp.synthesis}")
+            lines.append("")
+
+    # V2.1: Key Tensions (cross-video disagreements)
+    if content.key_tensions:
+        lines.append("---")
+        lines.append("")
+        lines.append("## Key Tensions")
+        lines.append("")
+        for tension in content.key_tensions:
+            lines.append(f"**{tension.topic}**")
+            lines.append("")
+            for p in tension.perspectives:
+                speaker = f" ({p.speaker})" if p.speaker else ""
+                lines.append(f"- *{p.video_title}*{speaker}: {p.position}")
+            if tension.resolution:
+                lines.append(f"- **Resolution**: {tension.resolution}")
+            lines.append("")
+
+    # Legacy Overview (daily_tldr) - only show if no big_picture_bullets
+    if content.daily_tldr and not content.big_picture_bullets:
+        lines.append("---")
+        lines.append("")
+        lines.append("## Overview")
+        lines.append("")
+        lines.append(content.daily_tldr)
+        lines.append("")
 
     # Video Sections - NO thumbnails
     lines.append("---")
@@ -85,16 +146,25 @@ def format_digest_markdown(content: DigestContentResponse, target_date: date) ->
     lines.extend(_format_contrarian_markdown_v2(content.contrarian_corner))
     lines.append("")
 
-    # Action Items - NO emoji
+    # Action Items - V2.1 with source attribution and first_step
     lines.append("---")
     lines.append("")
     lines.append("## Action Items")
     lines.append("")
     for item in content.action_items:
-        difficulty_label = f"[{item.difficulty}]"
-        lines.append(f"- **{item.action}** {difficulty_label}")
-        lines.append(f"  - {item.context}")
-    lines.append("")
+        lines.append(f"### {item.action}")
+        # V2.1: Source attribution
+        if item.source_video_title:
+            lines.append(f"*From: {item.source_video_title}*")
+        lines.append("")
+        lines.append(item.context)
+        # V2.1: First step (concrete action)
+        if item.first_step:
+            lines.append("")
+            lines.append(f"**First Step:** {item.first_step}")
+        lines.append("")
+        lines.append(f"*Difficulty: {item.difficulty}*")
+        lines.append("")
 
     # References Index - NO emoji headers
     lines.append("---")
@@ -123,17 +193,23 @@ def format_digest_markdown(content: DigestContentResponse, target_date: date) ->
 
 
 def _format_video_section_markdown_v2(video: VideoSection) -> List[str]:
-    """Format a single video section - V2 with depth fields, no thumbnail."""
+    """Format a single video section - V2.1 with depth fields and logical flow."""
     lines = []
 
     # Title and metadata
     lines.append(f"### [{video.title}]({video.video_url})")
     lines.append(f"*{video.channel_name}* | {video.duration_minutes} min")
     if video.speakers:
-        lines.append(f"*Speakers: {', '.join(video.speakers)}*")
+        lines.append(f"*Speakers: {', '.join(s.name for s in video.speakers)}*")
     if video.tags:
         lines.append(f"Tags: {', '.join(video.tags)}")
     lines.append("")
+
+    # V2.1: Logical flow (intellectual journey)
+    if video.logical_flow:
+        flow_str = " ".join(video.logical_flow)
+        lines.append(f"**Journey:** {flow_str}")
+        lines.append("")
 
     # Condensed summary
     lines.append(f"**Summary:** {video.condensed_summary}")
@@ -187,16 +263,28 @@ def _format_video_section_markdown_v2(video: VideoSection) -> List[str]:
 
 
 def _format_contrarian_markdown_v2(contrarian: ContrarianCorner) -> List[str]:
-    """Format contrarian corner - V2 no emoji."""
+    """Format contrarian corner - V2.1 with source attribution and so_what."""
     lines = []
+
+    # V2.1: Source attribution
+    if contrarian.source_video_title:
+        lines.append(f"*From: {contrarian.source_video_title}*")
+        lines.append("")
+
     lines.append(f"> **{contrarian.insight}**")
     lines.append("")
-    lines.append(f"*Why this challenges common wisdom:* {contrarian.why_counterintuitive}")
+    lines.append(f"**Why Counterintuitive:** {contrarian.why_counterintuitive}")
+
+    # V2.1: So what (actionable implication)
+    if contrarian.so_what:
+        lines.append("")
+        lines.append(f"**So What:** {contrarian.so_what}")
+
     return lines
 
 
 def _format_references_markdown_v2(refs: ReferencesIndex) -> List[str]:
-    """Format references index - V2 no emoji headers."""
+    """Format references index - V2.1 with social_links support."""
     lines = []
 
     def format_ref_list(title: str, items: List[ReferenceItem]):
@@ -204,10 +292,33 @@ def _format_references_markdown_v2(refs: ReferencesIndex) -> List[str]:
             return []
         result = [f"### {title}"]
         for ref in items:
+            # Build the main reference line
             if ref.url:
-                result.append(f"- [{ref.name}]({ref.url})" + (f" by {ref.author}" if ref.author else ""))
+                line = f"- [{ref.name}]({ref.url})"
             else:
-                result.append(f"- {ref.name}" + (f" by {ref.author}" if ref.author else ""))
+                line = f"- {ref.name}"
+
+            if ref.author:
+                line += f" by {ref.author}"
+
+            # V2.1: Add social links for people
+            if ref.social_links:
+                social_parts = []
+                if ref.social_links.get('twitter'):
+                    handle = ref.social_links['twitter']
+                    # Format as clickable link if it's a handle
+                    if handle.startswith('@'):
+                        social_parts.append(f"[Twitter](https://twitter.com/{handle})")
+                    else:
+                        social_parts.append(f"[Twitter]({handle})")
+                if ref.social_links.get('linkedin'):
+                    social_parts.append(f"[LinkedIn]({ref.social_links['linkedin']})")
+                if ref.social_links.get('website'):
+                    social_parts.append(f"[Web]({ref.social_links['website']})")
+                if social_parts:
+                    line += f" ({', '.join(social_parts)})"
+
+            result.append(line)
             if ref.description:
                 result.append(f"  - {ref.description}")
         result.append("")
@@ -492,8 +603,15 @@ def format_digest_html(content: DigestContentResponse, target_date: date) -> str
             <ol>{toc_items}</ol>
         </div>
 
-        <h2 id="overview">Overview</h2>
-        <div class="overview">{_html_paragraphs(content.daily_tldr)}</div>
+        {_format_big_picture_html(content.big_picture_bullets) if content.big_picture_bullets else ''}
+
+        {_format_deeper_picture_html(content.deeper_picture) if content.deeper_picture else ''}
+
+        {_format_convergence_html(content.convergence_points) if content.convergence_points else ''}
+
+        {_format_tensions_html(content.key_tensions) if content.key_tensions else ''}
+
+        {f'<h2 id="overview">Overview</h2><div class="overview">{_html_paragraphs(content.daily_tldr)}</div>' if content.daily_tldr and not content.big_picture_bullets else ''}
 
         <h2 id="video-breakdowns">Video Breakdowns</h2>
         {_format_videos_html_v2(content.video_sections)}
@@ -531,6 +649,71 @@ def _html_paragraphs(text: str) -> str:
     return "".join([f"<p>{p.strip()}</p>" for p in paragraphs if p.strip()])
 
 
+def _format_big_picture_html(bullets: List[str]) -> str:
+    """Format big picture bullets as HTML."""
+    if not bullets:
+        return ""
+    items = "".join([f"<li>{bullet}</li>" for bullet in bullets])
+    return f"""
+    <h2 id="the-big-picture">The Big Picture</h2>
+    <ul class="big-picture">{items}</ul>
+    """
+
+
+def _format_deeper_picture_html(text: str) -> str:
+    """Format deeper picture as HTML."""
+    if not text:
+        return ""
+    return f"""
+    <h2 id="the-deeper-picture">The Deeper Picture</h2>
+    <div class="deeper-picture">{_html_paragraphs(text)}</div>
+    """
+
+
+def _format_convergence_html(points: List[ConvergencePoint]) -> str:
+    """Format convergence points as HTML."""
+    if not points:
+        return ""
+    items = []
+    for cp in points:
+        video_refs = ", ".join([f"<em>{t}</em>" for t in cp.video_titles])
+        items.append(f"""
+        <div class="convergence-point">
+            <h4>{cp.concept}</h4>
+            <p class="video-refs">({video_refs})</p>
+            <blockquote>{cp.synthesis}</blockquote>
+        </div>
+        """)
+    return f"""
+    <h2 id="where-videos-converge">Where Videos Converge</h2>
+    <div class="convergence-section">{''.join(items)}</div>
+    """
+
+
+def _format_tensions_html(tensions: List[KeyTension]) -> str:
+    """Format key tensions as HTML."""
+    if not tensions:
+        return ""
+    items = []
+    for tension in tensions:
+        perspectives = []
+        for p in tension.perspectives:
+            speaker = f" ({p.speaker})" if p.speaker else ""
+            perspectives.append(f"<li><em>{p.video_title}</em>{speaker}: {p.position}</li>")
+        resolution = f"<p class='resolution'><strong>Resolution:</strong> {tension.resolution}</p>" if tension.resolution else ""
+        items.append(f"""
+        <div class="tension">
+            <h4>{tension.topic}</h4>
+            <ul>{''.join(perspectives)}</ul>
+            {resolution}
+        </div>
+        """)
+    return f"""
+    <h2 id="key-tensions">Key Tensions</h2>
+    <div class="tensions-section">{''.join(items)}</div>
+    """
+
+
 def _format_videos_html_v2(videos: List[VideoSection]) -> str:
     """Format video sections as HTML - V2 with depth fields, no thumbnail."""
     html_parts = []
@@ -565,9 +748,15 @@ def _format_videos_html_v2(videos: List[VideoSection]) -> str:
             connections_html = f'<div class="connections"><strong>Connections:</strong><ul>{connections_items}</ul></div>'
 
         # Build speakers and tags
-        speakers_html = f'<div class="video-meta">Speakers: {", ".join(video.speakers)}</div>' if video.speakers else ""
+        speakers_html = f'<div class="video-meta">Speakers: {", ".join(s.name for s in video.speakers)}</div>' if video.speakers else ""
         tags_html = f'<div class="video-tags">Tags: {", ".join(video.tags)}</div>' if video.tags else ""
         structure_html = f'<p><strong>Structure:</strong> {video.structure_overview}</p>' if video.structure_overview else ""
+
+        # V2.1: Build logical flow HTML
+        flow_html = ""
+        if video.logical_flow:
+            flow_str = " ".join(video.logical_flow)
+            flow_html = f'<div class="logical-flow"><strong>Journey:</strong> {flow_str}</div>'
 
         html_parts.append(f"""
         <div class="video-section">
@@ -575,6 +764,7 @@ def _format_videos_html_v2(videos: List[VideoSection]) -> str:
             <div class="video-meta">{video.channel_name} | {video.duration_minutes} min</div>
             {speakers_html}
             {tags_html}
+            {flow_html}
 
             <div class="video-summary"><strong>Summary:</strong> {video.condensed_summary}</div>
             {structure_html}
@@ -595,32 +785,40 @@ def _format_videos_html_v2(videos: List[VideoSection]) -> str:
 
 
 def _format_contrarian_html_v2(contrarian: ContrarianCorner) -> str:
-    """Format contrarian corner as HTML - V2 no emoji."""
+    """Format contrarian corner as HTML - V2.1 with source and so_what."""
+    source_html = f'<p class="contrarian-source"><em>From: {contrarian.source_video_title}</em></p>' if contrarian.source_video_title else ""
+    so_what_html = f'<p class="so-what"><strong>So What:</strong> {contrarian.so_what}</p>' if contrarian.so_what else ""
     return f"""
     <div class="contrarian">
+        {source_html}
         <p class="contrarian-insight">{contrarian.insight}</p>
-        <p><em>Why this challenges common wisdom:</em> {contrarian.why_counterintuitive}</p>
+        <p><strong>Why Counterintuitive:</strong> {contrarian.why_counterintuitive}</p>
+        {so_what_html}
     </div>
     """
 
 
 def _format_actions_html_v2(actions: List[ActionItem]) -> str:
-    """Format action items as HTML - V2 no emoji."""
+    """Format action items as HTML - V2.1 with source and first_step."""
     html_parts = []
     for item in actions:
         difficulty_class = f"difficulty-{item.difficulty}"
+        source_html = f'<p class="action-source"><em>From: {item.source_video_title}</em></p>' if item.source_video_title else ""
+        first_step_html = f'<p class="first-step"><strong>First Step:</strong> {item.first_step}</p>' if item.first_step else ""
         html_parts.append(f"""
         <div class="action-item">
             <span class="action-title">{item.action}</span>
             <span class="difficulty {difficulty_class}">{item.difficulty}</span>
+            {source_html}
             <p class="action-context">{item.context}</p>
+            {first_step_html}
         </div>
         """)
     return "".join(html_parts)
 
 
 def _format_references_html_v2(refs: ReferencesIndex) -> str:
-    """Format references as HTML - V2 no emoji."""
+    """Format references as HTML - V2.1 with social_links."""
     html_parts = []
 
     def format_category(title: str, items: List[ReferenceItem]):
@@ -634,6 +832,23 @@ def _format_references_html_v2(refs: ReferencesIndex) -> str:
                 items_html += f"<li>{ref.name}"
             if ref.author:
                 items_html += f" by {ref.author}"
+
+            # V2.1: Add social links
+            if ref.social_links:
+                social_parts = []
+                if ref.social_links.get('twitter'):
+                    handle = ref.social_links['twitter']
+                    if handle.startswith('@'):
+                        social_parts.append(f'<a href="https://twitter.com/{handle}">Twitter</a>')
+                    else:
+                        social_parts.append(f'<a href="{handle}">Twitter</a>')
+                if ref.social_links.get('linkedin'):
+                    social_parts.append(f'<a href="{ref.social_links["linkedin"]}">LinkedIn</a>')
+                if ref.social_links.get('website'):
+                    social_parts.append(f'<a href="{ref.social_links["website"]}">Web</a>')
+                if social_parts:
+                    items_html += f' ({", ".join(social_parts)})'
+
             if ref.description:
                 items_html += f" - {ref.description}"
             items_html += "</li>"

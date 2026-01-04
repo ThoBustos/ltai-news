@@ -1,4 +1,4 @@
-"""Prompt management for video analysis using Opik ChatPrompt - V2.0."""
+"""Prompt management for video analysis using Opik ChatPrompt - V2.1."""
 
 from typing import Any, Dict, List
 import opik
@@ -7,11 +7,11 @@ import opik
 class VideoAnalysisPrompts:
     """Centralized prompt management using Opik ChatPrompt system."""
 
-    CURRENT_VERSION = "2.0"
+    CURRENT_VERSION = "2.1"
 
     @staticmethod
     def get_master_extraction_prompt() -> opik.ChatPrompt:
-        """Get comprehensive analysis prompt with structured output schema - V2.0."""
+        """Get comprehensive analysis prompt with structured output schema - V2.1."""
         messages: List[Dict[str, Any]] = [
             {
                 "role": "system",
@@ -122,21 +122,44 @@ Break the video into logical sections (3-7 sections typically). For each:
 Papers, books, podcasts, links, tools, communities mentioned.
 Type: paper/book/podcast/link/discord/community/event
 
-## 13. PEOPLE & COMMUNITIES
-People, organizations, events, communities referenced.
-Include roles and affiliations where identifiable.
+## 13. PEOPLE MENTIONED
+For each person mentioned:
+- name: Full name as spoken
+- role: Their role/title if mentioned (e.g., "CEO", "Researcher")
+- affiliation: Company/organization if mentioned (e.g., "OpenAI", "Stanford")
+- context: Why they're mentioned in this video (1 sentence)
+- social_links: Dictionary of social handles. Include ONLY if:
+  - x/twitter: "@handle" — ONLY if explicitly mentioned in video/description
+  - linkedin: Full URL — ONLY if explicitly shown/mentioned
+  - website: URL — ONLY if explicitly mentioned
 
-## 14. CONCEPTS MENTIONED
+STRICT POLICY for social_links:
+- Do NOT guess handles based on name recognition
+- Do NOT use a "well-known handles" list
+- Even famous people's handles can be wrong/outdated
+- If unsure, OMIT social_links entirely
+- Wrong link is worse than no link
+
+## 14. COMMUNITIES & EVENTS
+For each community, Discord, event, or organization:
+- name: Name as mentioned
+- type: One of: discord | community | event | organization | podcast | newsletter | course
+- description: Brief description (1 sentence)
+- url: Link ONLY if explicitly mentioned in video/description
+  - Do NOT guess URLs even for well-known sites
+  - If unsure, OMIT the url field
+
+## 15. CONCEPTS MENTIONED
 Key concepts and ideas with descriptions and relevance to the video.
 
-## 15. DETAILED INSIGHTS (3-4 paragraphs)
+## 16. DETAILED INSIGHTS (3-4 paragraphs)
 Extended analysis that:
 - Connects the dots between sections and ideas
 - Identifies implications not explicitly stated
 - Notes what's missing or could be challenged
 - Provides synthesis that adds value beyond summarizing
 
-## 16. CONFIDENCE SCORES
+## 17. CONFIDENCE SCORES
 Rate your confidence (0.0-1.0) for each extraction category:
 tldr, teaser_hooks, keywords, core_topics, lessons_learned, direct_quotes,
 analogies_metaphors, frameworks_shared, statistics_data, section_analysis,
@@ -161,17 +184,20 @@ QUALITY STANDARDS:
                 "category": "video-analysis",
                 "output_schema": "VideoAnalysisResponse",
                 "version": VideoAnalysisPrompts.CURRENT_VERSION,
-                "extraction_type": "comprehensive-v2",
+                "extraction_type": "comprehensive-v2.1",
                 "changes": [
-                    "Added direct_quotes extraction (5-10 verbatim aha moments)",
-                    "Added analogies_metaphors extraction",
-                    "Added frameworks_shared extraction",
-                    "Added statistics_data extraction",
-                    "Added section_analysis deep dive",
-                    "Added teaser_hooks (3 sentences)",
-                    "Added keywords extraction (8-15 tags)",
-                    "Full transcript processing (no truncation)",
-                    "Enhanced prompt for density and precision"
+                    "V2.1: Added social_links extraction for people (STRICT policy)",
+                    "V2.1: Added context field for people mentions",
+                    "V2.1: Added description and url for communities",
+                    "V2.1: Expanded community types (podcast, newsletter, course)",
+                    "V2: Added direct_quotes extraction (5-10 verbatim aha moments)",
+                    "V2: Added analogies_metaphors extraction",
+                    "V2: Added frameworks_shared extraction",
+                    "V2: Added statistics_data extraction",
+                    "V2: Added section_analysis deep dive",
+                    "V2: Added teaser_hooks (3 sentences)",
+                    "V2: Added keywords extraction (8-15 tags)",
+                    "V2: Full transcript processing (no truncation)"
                 ]
             }
         )

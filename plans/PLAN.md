@@ -17,6 +17,14 @@
 - hitting output tokens limit. Needs to save final response in a better sequence to manage best context windows. **(ON THIS!)**
 
 
+fun live coding session(s):
+- add if 0 videos in the day edge case
+- improve styling for ease of read.
+- add prevous day(s) section to the digest.
+- enhance contrarian corner: add source attribution, more details, links/resources
+- add search/filter by keywords & preferences across past issues
+BONUS: - add weekly & monthly recaps (different abstraction levels for newsletter fatigue)
+
 
 
 

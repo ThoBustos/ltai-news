@@ -5,33 +5,20 @@ import json
 from datetime import datetime, timezone
 
 import opik
-from google import genai
 from google.genai.types import GenerateContentConfig
 
 from app.core.logging import logger
 from app.config.settings import settings
+from app.core.utils.llm_client import (
+    get_genai_client,
+    extract_token_usage,
+    parse_llm_json,
+)
 from app.models.video_analysis import VideoAnalysisResponse, VideoAnalysisComplete, ProcessingMetrics
 from app.repositories.video_repository import VideoRepository
 from app.repositories.channel_repository import ChannelRepository
 from app.agents.video_analyzer.state import VideoAnalysisState
 from app.agents.video_analyzer.prompts import VideoAnalysisPrompts
-
-# Gemini Flash pricing (as of Dec 2024)
-# https://ai.google.dev/pricing
-GEMINI_FLASH_INPUT_PRICE_PER_1M = 0.075   # $0.075 per 1M input tokens
-GEMINI_FLASH_OUTPUT_PRICE_PER_1M = 0.30    # $0.30 per 1M output tokens
-
-
-def _get_genai_client():
-    """Get Google GenAI client for LLM calls."""
-    return genai.Client(api_key=settings.google_api_key)
-
-
-def _calculate_cost(input_tokens: int, output_tokens: int) -> float:
-    """Calculate cost in USD from token counts using Gemini Flash pricing."""
-    input_cost = (input_tokens / 1_000_000) * GEMINI_FLASH_INPUT_PRICE_PER_1M
-    output_cost = (output_tokens / 1_000_000) * GEMINI_FLASH_OUTPUT_PRICE_PER_1M
-    return input_cost + output_cost
 
 
 async def load_context_node(state: VideoAnalysisState) -> VideoAnalysisState:
@@ -123,8 +110,8 @@ Your response must be valid JSON only, no additional text."""
         
         user_content += schema_instruction
 
-        # Get GenAI client (track_langgraph handles workflow tracing)
-        client = _get_genai_client()
+        # Get GenAI client
+        client = get_genai_client()
         model_name = settings.analysis_model_name
 
         # Make LLM call using Google GenAI SDK
@@ -139,28 +126,11 @@ Your response must be valid JSON only, no additional text."""
         )
         processing_time = time.time() - start_time
 
-        # Extract token counts from response
-        usage = response.usage_metadata
-        input_tokens = (usage.prompt_token_count or 0) if usage else 0
-        output_tokens = (usage.candidates_token_count or 0) if usage else 0
-        total_tokens = (usage.total_token_count or 0) if usage else (input_tokens + output_tokens)
-        
-        # Calculate cost from token counts
-        cost = _calculate_cost(input_tokens, output_tokens)
+        # Extract token usage and cost using shared utility
+        usage = extract_token_usage(response)
 
-        # Parse JSON response
-        response_text = (response.text or "").strip()
-        if response_text.startswith('```json'):
-            response_text = response_text.replace('```json', '').replace('```', '').strip()
-        elif response_text.startswith('```'):
-            response_text = response_text.replace('```', '').strip()
-
-        if '{' in response_text:
-            start_idx = response_text.find('{')
-            end_idx = response_text.rfind('}') + 1
-            response_text = response_text[start_idx:end_idx]
-
-        parsed_response = VideoAnalysisResponse.model_validate_json(response_text)
+        # Parse JSON response using shared utility (handles markdown fences)
+        parsed_response = parse_llm_json(response.text, VideoAnalysisResponse)
 
         # Create processing metrics with calculated cost
         metrics = ProcessingMetrics(
@@ -168,9 +138,9 @@ Your response must be valid JSON only, no additional text."""
             extraction_method="single-master-prompt",
             started_at=datetime.now(timezone.utc),
             completed_at=datetime.now(timezone.utc),
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_cost=cost,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            total_cost=usage.cost_usd,
             processing_time_seconds=processing_time,
             confidence_scores=parsed_response.confidence_scores,
             extraction_completeness={
@@ -203,10 +173,10 @@ Your response must be valid JSON only, no additional text."""
                     metadata={
                         "prompt_name": "video-master-extraction",
                         "confidence_avg": sum(parsed_response.confidence_scores.values()) / len(parsed_response.confidence_scores),
-                        "tokens_input": input_tokens,
-                        "tokens_output": output_tokens,
-                        "total_tokens": total_tokens,
-                        "cost_usd": cost,
+                        "tokens_input": usage.input_tokens,
+                        "tokens_output": usage.output_tokens,
+                        "total_tokens": usage.total_tokens,
+                        "cost_usd": usage.cost_usd,
                         "processing_time_seconds": processing_time
                     }
                 )
@@ -214,7 +184,7 @@ Your response must be valid JSON only, no additional text."""
             pass
 
         logger.info(
-            f"Master extraction completed: {total_tokens} tokens, ${cost:.6f}, {processing_time:.2f}s"
+            f"Master extraction completed: {usage.total_tokens} tokens, ${usage.cost_usd:.6f}, {processing_time:.2f}s"
         )
 
         return state
