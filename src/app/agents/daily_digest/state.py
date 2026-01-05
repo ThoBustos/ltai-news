@@ -36,3 +36,4 @@ class DailyDigestState(TypedDict):
     # Result (from save_results_node)
     digest_id: NotRequired[str]
     references_extracted: NotRequired[int]
+    is_empty: NotRequired[bool]  # True when no videos found (still saves to DB)

@@ -88,6 +88,20 @@ async def generate_daily_digest(target_date: date) -> Optional[DigestGenerationR
         digest_content = final_state.get("digest_content")
         digest_id = final_state.get("digest_id")
         metrics = final_state.get("metrics")
+        is_empty = final_state.get("is_empty", False)
+
+        # Handle empty digest case (no videos but still a valid success)
+        if is_empty and digest_id:
+            logger.info(f"Empty digest saved for {date_str}: no videos available")
+            return DigestGenerationResult(
+                success=True,
+                is_empty=True,
+                digest_id=digest_id,
+                publish_date=date_str,
+                videos_included=0,
+                channels_included=0,
+                errors=errors,
+            )
 
         if not digest_content or not digest_id:
             logger.error("Digest workflow completed but no content or ID generated")

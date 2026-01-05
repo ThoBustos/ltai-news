@@ -348,13 +348,19 @@ async def save_results_node(state: DailyDigestState) -> DailyDigestState:
         formatted_html = state.get("formatted_html", "")
         video_analyses = state.get("video_analyses", [])
 
-        if not digest_content or not metrics:
-            logger.warning("No digest content to save")
-            state.setdefault("errors", []).append("No digest content to save")
-            return state
-
         target_date = parse_date(state["target_date"])
         digest_repo = DailyDigestRepository()
+
+        if not digest_content or not metrics:
+            # Save empty digest so frontend knows we processed this date
+            digest_id = await digest_repo.save_empty_digest(
+                target_date,
+                reason="No video analyses available for this date"
+            )
+            state["digest_id"] = digest_id
+            state["is_empty"] = True
+            logger.info(f"Saved empty digest {digest_id} for {state['target_date']}")
+            return state
 
         # Extract source video IDs and channel IDs
         source_video_ids = [v["video_id"] for v in video_analyses]

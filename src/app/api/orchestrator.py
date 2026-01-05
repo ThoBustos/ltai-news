@@ -608,8 +608,13 @@ async def generate_digest(date_str: str) -> DigestGenerationResponse:
         result = await generate_daily_digest(target_date)
 
         if result and result.success:
+            message = (
+                f"Digest saved for {date_str} - no content to report"
+                if result.is_empty
+                else f"Digest generated successfully for {date_str}"
+            )
             return DigestGenerationResponse(
-                message=f"Digest generated successfully for {date_str}",
+                message=message,
                 target_date=date_str,
                 status="completed",
                 result=result

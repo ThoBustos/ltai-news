@@ -396,6 +396,7 @@ class DigestGenerationResult(BaseModel):
     """Result from digest generation workflow."""
 
     success: bool
+    is_empty: bool = False
     digest_id: Optional[str] = None
     publish_date: str
     title: Optional[str] = None

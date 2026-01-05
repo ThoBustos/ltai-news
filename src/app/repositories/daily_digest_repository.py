@@ -91,6 +91,54 @@ class DailyDigestRepository:
             logger.error(f"Failed to save digest for {publish_date}: {e}", exc_info=True)
             return None
 
+    async def save_empty_digest(
+        self,
+        publish_date: date,
+        reason: str = "No videos found",
+    ) -> Optional[str]:
+        """Save an empty digest record for days with no content.
+
+        This allows the frontend to show "We processed this day - nothing relevant"
+        rather than treating empty days as errors.
+
+        Args:
+            publish_date: Date of the digest
+            reason: Explanation of why digest is empty
+
+        Returns:
+            UUID of saved digest or None if failed
+        """
+        logger.info(f"Saving empty digest for {publish_date}: {reason}")
+
+        try:
+            data = {
+                "publish_date": publish_date.isoformat(),
+                "title": "A Quiet One",
+                "description": reason,
+                "video_count": 0,
+                "source_video_ids": [],
+                "channels_included": [],
+                "keywords": [],
+                "content_json": {"empty": True, "reason": reason},
+            }
+
+            result = self.client.table(self.digests_table).upsert(
+                data,
+                on_conflict="publish_date"
+            ).execute()
+
+            if result.data and len(result.data) > 0:
+                digest_id = result.data[0].get("id")
+                logger.info(f"Saved empty digest {digest_id} for {publish_date}")
+                return str(digest_id)
+
+            logger.warning(f"No data returned from empty digest upsert for {publish_date}")
+            return None
+
+        except Exception as e:
+            logger.error(f"Failed to save empty digest for {publish_date}: {e}", exc_info=True)
+            return None
+
     async def get_digest_by_date(self, target_date: date) -> Optional[DailyDigestDB]:
         """Get digest for a specific date.
 
