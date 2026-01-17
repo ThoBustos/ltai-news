@@ -111,6 +111,9 @@ _FENCE_PATTERN = re.compile(
     re.DOTALL | re.IGNORECASE
 )
 
+# Regex patterns for common JSON issues from LLMs
+_TRAILING_COMMA_PATTERN = re.compile(r',\s*([}\]])')  # Trailing comma before } or ]
+
 T = TypeVar('T', bound=BaseModel)
 
 
@@ -171,7 +174,13 @@ def parse_llm_json(response_text: Optional[str], model: Type[T]) -> T:
         text = text[start_idx:end_idx + 1]
         logger.debug("Extracted JSON object from surrounding text")
     
-    # Step 3: Validate against Pydantic model
+    # Step 3: Repair common JSON issues (trailing commas)
+    repaired_text = _TRAILING_COMMA_PATTERN.sub(r'\1', text)
+    if repaired_text != text:
+        logger.debug("Repaired trailing comma(s) in JSON response")
+        text = repaired_text
+    
+    # Step 4: Validate against Pydantic model
     try:
         return model.model_validate_json(text)
     except Exception as e:
@@ -260,4 +269,5 @@ async def generate_structured(
     
     usage = extract_token_usage(response)
     return result, usage
+
 
