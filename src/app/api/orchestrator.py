@@ -1,5 +1,7 @@
 """API endpoints for orchestrator control."""
 
+from datetime import timedelta
+
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 
 from app.core.logging import logger
@@ -18,6 +20,8 @@ from app.api.schemas.orchestrator import (
     DigestSendResponse,
     DigestContentResponse,
     ReprocessFailedResponse,
+    WeeklyDigestGenerationResponse,
+    WeeklyDigestContentResponse,
 )
 
 router = APIRouter(prefix="/api/orchestrator", tags=["orchestrator"])
@@ -868,3 +872,217 @@ async def search_reference(name: str):
     except Exception as e:
         logger.error(f"Failed to search reference {name}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to search reference: {str(e)}")
+
+
+# ========== Weekly Digest Endpoints ==========
+
+@router.post("/generate-weekly/{week_start_date}", response_model=WeeklyDigestGenerationResponse)
+async def generate_weekly_digest_endpoint(week_start_date: str) -> WeeklyDigestGenerationResponse:
+    """
+    Generate a weekly digest for the specified week.
+
+    This endpoint triggers the weekly digest workflow:
+    1. Loads all daily digests for the target week (Mon-Sun)
+    2. Aggregates trending references across the week
+    3. Generates cohesive weekly newsletter content via LLM
+    4. Saves weekly digest with markdown/HTML to database
+
+    Args:
+        week_start_date: Monday of the target week (YYYY-MM-DD, must be a Monday)
+
+    Returns:
+        WeeklyDigestGenerationResponse with generation results
+    """
+    logger.info(f"API request to generate weekly digest for week of {week_start_date}")
+
+    try:
+        week_start = parse_date(week_start_date)
+
+        # Validate it's a Monday
+        if week_start.weekday() != 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Date must be a Monday, got {week_start.strftime('%A')}"
+            )
+
+        week_end = week_start + timedelta(days=6)
+
+        from app.agents.weekly_digest import generate_weekly_digest
+        result = await generate_weekly_digest(week_start)
+
+        if result and result.success:
+            message = (
+                f"Weekly digest saved for week of {week_start_date} - no content to report"
+                if result.is_empty
+                else f"Weekly digest generated successfully for week of {week_start_date}"
+            )
+            return WeeklyDigestGenerationResponse(
+                message=message,
+                week_start=week_start_date,
+                week_end=week_end.isoformat(),
+                status="completed",
+                result=result
+            )
+        else:
+            return WeeklyDigestGenerationResponse(
+                message=f"Weekly digest generation failed for week of {week_start_date}",
+                week_start=week_start_date,
+                week_end=week_end.isoformat(),
+                status="failed",
+                result=result
+            )
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        logger.error(f"Invalid date format: {week_start_date}: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
+    except Exception as e:
+        logger.error(f"Weekly digest generation failed for {week_start_date}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Weekly digest generation failed: {str(e)}")
+
+
+@router.post("/generate-weekly/{week_start_date}/async")
+async def generate_weekly_digest_async(week_start_date: str, background_tasks: BackgroundTasks):
+    """
+    Generate a weekly digest asynchronously in the background.
+
+    Args:
+        week_start_date: Monday of the target week (YYYY-MM-DD, must be a Monday)
+        background_tasks: FastAPI background tasks
+
+    Returns:
+        Immediate response while weekly digest generation runs in background
+    """
+    logger.info(f"API request to generate weekly digest async for week of {week_start_date}")
+
+    try:
+        week_start = parse_date(week_start_date)
+
+        # Validate it's a Monday
+        if week_start.weekday() != 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Date must be a Monday, got {week_start.strftime('%A')}"
+            )
+
+        week_end = week_start + timedelta(days=6)
+
+        # Add weekly digest generation task to background
+        async def run_weekly_generation():
+            from app.agents.weekly_digest import generate_weekly_digest
+            result = await generate_weekly_digest(week_start)
+            if result and result.success:
+                logger.info(f"Background weekly digest generation completed for {week_start_date}: {result.weekly_digest_id}")
+            else:
+                logger.error(f"Background weekly digest generation failed for {week_start_date}")
+
+        background_tasks.add_task(run_weekly_generation)
+
+        return {
+            "message": f"Weekly digest generation started in background for week of {week_start_date}",
+            "week_start": week_start_date,
+            "week_end": week_end.isoformat(),
+            "status": "started",
+            "note": "Check /api/orchestrator/weekly/{week_start_date} to see the result"
+        }
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        logger.error(f"Invalid date format: {week_start_date}: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
+    except Exception as e:
+        logger.error(f"Failed to start background weekly digest generation for {week_start_date}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to start weekly digest generation: {str(e)}")
+
+
+@router.get("/weekly/latest", response_model=WeeklyDigestContentResponse)
+async def get_latest_weekly_digest() -> WeeklyDigestContentResponse:
+    """
+    Get the most recent weekly digest.
+
+    Returns:
+        WeeklyDigestContentResponse with the latest weekly digest
+    """
+    try:
+        from app.repositories.weekly_digest_repository import WeeklyDigestRepository
+        weekly_repo = WeeklyDigestRepository()
+
+        digest = await weekly_repo.get_latest_weekly_digest()
+
+        if not digest:
+            raise HTTPException(status_code=404, detail="No weekly digests found")
+
+        return WeeklyDigestContentResponse(
+            message="Latest weekly digest found",
+            week_start=digest.week_start_date.isoformat() if digest.week_start_date else "",
+            week_end=digest.week_end_date.isoformat() if digest.week_end_date else "",
+            digest_id=str(digest.id) if digest.id else None,
+            title=digest.title,
+            content_json=digest.content_json,
+            markdown=digest.formatted_markdown,
+            html=digest.formatted_html,
+            days_with_content=digest.days_with_content,
+            total_videos=digest.total_videos,
+            is_sent=digest.is_sent,
+            sent_at=digest.sent_at.isoformat() if digest.sent_at else None
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get latest weekly digest: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get latest weekly digest: {str(e)}")
+
+
+@router.get("/weekly/{week_start_date}", response_model=WeeklyDigestContentResponse)
+async def get_weekly_digest(week_start_date: str) -> WeeklyDigestContentResponse:
+    """
+    Get the weekly digest content for a specific week.
+
+    Args:
+        week_start_date: Monday of the target week (YYYY-MM-DD)
+
+    Returns:
+        WeeklyDigestContentResponse with weekly digest content
+    """
+    logger.debug(f"API request for weekly digest content for week of {week_start_date}")
+
+    try:
+        week_start = parse_date(week_start_date)
+        week_end = week_start + timedelta(days=6)
+
+        from app.repositories.weekly_digest_repository import WeeklyDigestRepository
+        weekly_repo = WeeklyDigestRepository()
+
+        digest = await weekly_repo.get_weekly_digest_by_date(week_start)
+
+        if not digest:
+            return WeeklyDigestContentResponse(
+                message=f"No weekly digest found for week of {week_start_date}",
+                week_start=week_start_date,
+                week_end=week_end.isoformat(),
+            )
+
+        return WeeklyDigestContentResponse(
+            message=f"Weekly digest found for week of {week_start_date}",
+            week_start=week_start_date,
+            week_end=week_end.isoformat(),
+            digest_id=str(digest.id) if digest.id else None,
+            title=digest.title,
+            content_json=digest.content_json,
+            markdown=digest.formatted_markdown,
+            html=digest.formatted_html,
+            days_with_content=digest.days_with_content,
+            total_videos=digest.total_videos,
+            is_sent=digest.is_sent,
+            sent_at=digest.sent_at.isoformat() if digest.sent_at else None
+        )
+
+    except ValueError as e:
+        logger.error(f"Invalid date format: {week_start_date}: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
+    except Exception as e:
+        logger.error(f"Failed to get weekly digest for {week_start_date}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get weekly digest: {str(e)}")

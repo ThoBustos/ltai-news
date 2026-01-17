@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from app.models.pipeline import PipelineResult, TranscriptExtractionResult
 from app.models.video_analysis import VideoAnalysisComplete
 from app.models.daily_digest import DigestGenerationResult, DigestSendResult
+from app.models.weekly_digest import WeeklyDigestGenerationResult
 
 
 class PipelineRunResponse(BaseModel):
@@ -106,3 +107,32 @@ class ReprocessFailedResponse(BaseModel):
     videos_reprocessed: int = 0
     analyses_completed: int = 0
     errors: List[str] = []
+
+
+# === Weekly Digest Schemas ===
+
+class WeeklyDigestGenerationResponse(BaseModel):
+    """Response for weekly digest generation requests."""
+
+    message: str
+    week_start: str
+    week_end: str
+    status: str
+    result: Optional[WeeklyDigestGenerationResult] = None
+
+
+class WeeklyDigestContentResponse(BaseModel):
+    """Response for getting weekly digest content."""
+
+    message: str
+    week_start: str
+    week_end: str
+    digest_id: Optional[str] = None
+    title: Optional[str] = None
+    content_json: Optional[Dict[str, Any]] = None
+    markdown: Optional[str] = None
+    html: Optional[str] = None
+    days_with_content: int = 0
+    total_videos: int = 0
+    is_sent: bool = False
+    sent_at: Optional[str] = None
