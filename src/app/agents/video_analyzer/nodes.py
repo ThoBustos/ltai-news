@@ -57,8 +57,8 @@ async def load_context_node(state: VideoAnalysisState) -> VideoAnalysisState:
         return state
 
     except Exception as e:
-        logger.error(f"Failed to load context for video {state['video_id']}: {e}")
-        state.setdefault("errors", []).append(f"load_context: {e}")
+        logger.error("Failed to load context for video {}: {}", state['video_id'], e)
+        state.setdefault("errors", []).append(f"load_context: {e!s}")
         raise
 
 
@@ -190,8 +190,8 @@ Your response must be valid JSON only, no additional text."""
         return state
 
     except Exception as e:
-        logger.error(f"Failed master extraction: {e}")
-        state.setdefault("errors", []).append(f"master_extraction: {e}")
+        logger.error("Failed master extraction: {}", e)
+        state.setdefault("errors", []).append(f"master_extraction: {e!s}")
         raise
 
 
@@ -260,6 +260,6 @@ async def save_results_node(state: VideoAnalysisState) -> VideoAnalysisState:
         return state
 
     except Exception as e:
-        logger.error(f"Failed to save results: {e}")
-        state.setdefault("errors", []).append(f"save_results: {e}")
+        logger.error("Failed to save results: {}", e)
+        state.setdefault("errors", []).append(f"save_results: {e!s}")
         raise
