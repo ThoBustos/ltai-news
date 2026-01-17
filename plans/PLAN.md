@@ -34,6 +34,7 @@ Batch 2:
 (note: check the prmpt for weekly bcse it has v2 in it - and prompt versioning is off. future simple fix.)
 
 Batch 3:
+- add a summary per category in the weekly digest.
 
 
 BACKLOG:
