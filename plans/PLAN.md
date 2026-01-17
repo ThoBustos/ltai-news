@@ -33,6 +33,8 @@ Batch 2:
 - review 15th weekly generation
 (note: check the prmpt for weekly bcse it has v2 in it - and prompt versioning is off. future simple fix.)
 
+Batch 3:
+
 
 BACKLOG:
 - add prevous day(s) section to the digest.
