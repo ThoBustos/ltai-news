@@ -272,6 +272,86 @@ class DailyDigestRepository:
             logger.error(f"Failed to get recent digests: {e}", exc_info=True)
             return []
 
+    async def get_digests_in_range(
+        self,
+        start_date: date,
+        end_date: date,
+    ) -> List[DailyDigestDB]:
+        """Get all digests within a date range.
+
+        Args:
+            start_date: Start of range (inclusive)
+            end_date: End of range (inclusive)
+
+        Returns:
+            List of digests in the range ordered by publish_date asc
+        """
+        try:
+            result = (
+                self.client.table(self.digests_table)
+                .select("*")
+                .gte("publish_date", start_date.isoformat())
+                .lte("publish_date", end_date.isoformat())
+                .order("publish_date", desc=False)
+                .execute()
+            )
+
+            return [self._row_to_digest(row) for row in result.data]
+
+        except Exception as e:
+            logger.error(f"Failed to get digests in range {start_date} to {end_date}: {e}", exc_info=True)
+            return []
+
+    async def get_references_in_date_range(
+        self,
+        start_date: date,
+        end_date: date,
+        min_mentions: int = 1,
+    ) -> List[DigestReference]:
+        """Get references mentioned in digests within a date range.
+
+        Uses digest_ids array overlap to find references that appeared
+        in digests from the specified date range.
+
+        Args:
+            start_date: Start of range (inclusive)
+            end_date: End of range (inclusive)
+            min_mentions: Minimum mention count to include
+
+        Returns:
+            List of references ordered by mention_count desc
+        """
+        try:
+            # 1. Get digest IDs for the date range
+            digests = await self.get_digests_in_range(start_date, end_date)
+            digest_id_set = {str(d.id) for d in digests if d.id}
+
+            if not digest_id_set:
+                return []
+
+            # 2. Query references with minimum mention count
+            result = (
+                self.client.table(self.references_table)
+                .select("*")
+                .gte("mention_count", min_mentions)
+                .order("mention_count", desc=True)
+                .limit(50)
+                .execute()
+            )
+
+            # 3. Filter in Python for array overlap (Supabase array overlap is complex)
+            filtered = []
+            for row in result.data:
+                ref_digest_ids = set(row.get("digest_ids", []) or [])
+                if ref_digest_ids & digest_id_set:
+                    filtered.append(self._row_to_reference(row))
+
+            return filtered
+
+        except Exception as e:
+            logger.error(f"Failed to get references in range {start_date} to {end_date}: {e}", exc_info=True)
+            return []
+
     # === Reference Operations ===
 
     async def upsert_references(
@@ -469,11 +549,11 @@ class DailyDigestRepository:
             formatted_html=row.get("formatted_html"),
             formatted_markdown=row.get("formatted_markdown"),
             content_json=row.get("content_json"),
-            source_video_ids=row.get("source_video_ids", []),
-            source_tweet_ids=row.get("source_tweet_ids", []),
+            source_video_ids=row.get("source_video_ids") or [],
+            source_tweet_ids=row.get("source_tweet_ids") or [],
             video_count=row.get("video_count"),
-            channels_included=row.get("channels_included", []),
-            keywords=row.get("keywords", []),
+            channels_included=row.get("channels_included") or [],
+            keywords=row.get("keywords") or [],
             confidence_score=float(row["confidence_score"]) if row.get("confidence_score") else None,
             total_tokens_input=row.get("total_tokens_input"),
             total_tokens_output=row.get("total_tokens_output"),
@@ -499,8 +579,8 @@ class DailyDigestRepository:
             first_seen_date=date.fromisoformat(row["first_seen_date"]) if row.get("first_seen_date") else None,
             mention_count=row.get("mention_count", 1),
             digest_ids=[UUID(d) for d in (row.get("digest_ids") or [])],
-            video_ids=row.get("video_ids", []),
-            metadata=row.get("metadata", {}),
+            video_ids=row.get("video_ids") or [],
+            metadata=row.get("metadata") or {},
             created_at=datetime.fromisoformat(row["created_at"]) if row.get("created_at") else None,
             updated_at=datetime.fromisoformat(row["updated_at"]) if row.get("updated_at") else None,
         )
