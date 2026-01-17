@@ -65,3 +65,4 @@ CREATE POLICY "subscribers_service_only" ON subscribers
 -- Check policies exist:
 --   SELECT tablename, policyname, cmd FROM pg_policies WHERE schemaname = 'public';
 
+
