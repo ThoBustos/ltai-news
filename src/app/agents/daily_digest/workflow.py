@@ -137,9 +137,9 @@ async def generate_daily_digest(target_date: date) -> Optional[DigestGenerationR
         return result
 
     except Exception as e:
-        logger.error(f"Daily digest workflow failed for {date_str}: {e}", exc_info=True)
+        logger.error("Daily digest workflow failed for {}: {}", date_str, e, exc_info=True)
         return DigestGenerationResult(
             success=False,
             publish_date=date_str,
-            errors=[f"Workflow failed: {str(e)}"],
+            errors=[f"Workflow failed: {e!s}"],
         )

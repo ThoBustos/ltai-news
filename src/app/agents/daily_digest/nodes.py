@@ -166,8 +166,8 @@ async def load_data_node(state: DailyDigestState) -> DailyDigestState:
         return state
 
     except Exception as e:
-        logger.error(f"Failed to load data for digest: {e}", exc_info=True)
-        state.setdefault("errors", []).append(f"load_data: {e}")
+        logger.error("Failed to load data for digest: {}", e, exc_info=True)
+        state.setdefault("errors", []).append(f"load_data: {e!s}")
         raise
 
 
@@ -326,8 +326,8 @@ Your response must be valid JSON only, no additional text."""
         return state
 
     except Exception as e:
-        logger.error(f"Failed to generate digest: {e}", exc_info=True)
-        state.setdefault("errors", []).append(f"generate_digest: {e}")
+        logger.error("Failed to generate digest: {}", e, exc_info=True)
+        state.setdefault("errors", []).append(f"generate_digest: {e!s}")
         raise
 
 
@@ -458,6 +458,6 @@ async def save_results_node(state: DailyDigestState) -> DailyDigestState:
         return state
 
     except Exception as e:
-        logger.error(f"Failed to save digest results: {e}", exc_info=True)
-        state.setdefault("errors", []).append(f"save_results: {e}")
+        logger.error("Failed to save digest results: {}", e, exc_info=True)
+        state.setdefault("errors", []).append(f"save_results: {e!s}")
         raise

@@ -199,6 +199,21 @@ For EACH of the {{video_count}} videos, generate:
 ### 11. REFERENCES_INDEX
 Group by type (books, papers, frameworks, concepts, people, communities).
 For people, include social_links dict when known from the video context.
+IMPORTANT: Each item must be an object with "name" and optional fields, NOT a plain string.
+
+Example format:
+```json
+{
+  "books": [{"name": "Thinking Fast and Slow", "author": "Daniel Kahneman", "description": "Cognitive biases"}],
+  "papers": [{"name": "Attention Is All You Need", "author": "Vaswani et al.", "url": "https://arxiv.org/..."}],
+  "frameworks": [{"name": "RAG", "description": "Retrieval-augmented generation"}],
+  "concepts": [{"name": "Continuous Pre-training", "description": "Training on new data without forgetting"}],
+  "people": [{"name": "Andrej Karpathy", "description": "AI researcher", "social_links": {"twitter": "https://x.com/karpathy"}}],
+  "communities": [{"name": "Hacker News", "url": "https://news.ycombinator.com"}]
+}
+```
+BAD: "concepts": ["Concept1", "Concept2"]  ← plain strings will fail validation
+GOOD: "concepts": [{"name": "Concept1", "description": "..."}, {"name": "Concept2"}]
 
 ### 12. CONCLUSION
 Final thought tying everything together. Professional tone, no emoji.
