@@ -14,7 +14,7 @@ class CoreTopic(BaseModel):
 
 class SourceReference(BaseModel):
     """Individual source reference."""
-    type: Literal["paper", "book", "podcast", "link", "discord", "community", "event"] = Field(description="Source type")
+    type: Literal["paper", "book", "podcast", "link", "discord", "community", "event", "course"] = Field(description="Source type")
     title: str = Field(description="Source title or name")
     url: Optional[str] = Field(None, description="URL if available")
     author: Optional[str] = Field(None, description="Author or creator")
