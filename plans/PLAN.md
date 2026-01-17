@@ -17,14 +17,25 @@
 - hitting output tokens limit. Needs to save final response in a better sequence to manage best context windows. **(ON THIS!)**
 
 
-fun live coding session(s):
-- add if 0 videos in the day edge case
-- improve styling for ease of read.
-- add prevous day(s) section to the digest.
+Live coding session(s):
+Batch 1:
+- add if 0 videos in the day edge case *
+- style of cards for issues in newsletter view *
 - enhance contrarian corner: add source attribution, more details, links/resources
 - add search/filter by keywords & preferences across past issues
+
+Batch 2:
+- fix some UI newsletter things (url in deep dive section, youtube links broken and num of videos repeated)
+- more UI things -> improved filtering logics + filter btw ALL, daily, weekly.
+- weekly processing (future improvement of this is to use past week as ref for this week analysis. creating momentum)
+    - backend - generated 2 versions
+    - frontend -> generated v1 and adapted for v2
+- review 15th weekly generation
+(note: check the prmpt for weekly bcse it has v2 in it - and prompt versioning is off. future simple fix.)
+
+
+BACKLOG:
+- add prevous day(s) section to the digest.
+- would be cool to allow user to easily share a video/insights from any daily/weekly digest.
 BONUS: - add weekly & monthly recaps (different abstraction levels for newsletter fatigue)
-
-
-
 
