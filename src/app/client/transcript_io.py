@@ -42,7 +42,7 @@ class TranscriptIoClient:
             base_url = f"{base_url}/api"
             
         self.base_url = base_url
-        self.timeout = 60.0  # Increased for batch requests
+        self.timeout = 180.0  # 3 minutes for long-form content (podcasts, interviews)
         
         # Ensure API key has proper Basic auth format
         if not self.api_key.startswith('Basic '):

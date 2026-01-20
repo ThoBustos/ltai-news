@@ -5,16 +5,13 @@ import json
 from datetime import date
 
 import opik
-from google.genai.types import GenerateContentConfig
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import SystemMessage, HumanMessage
 
 from app.core.logging import logger
 from app.config.settings import settings
 from app.core.utils.time_window import parse_date
-from app.core.utils.llm_client import (
-    get_genai_client,
-    extract_token_usage,
-    parse_llm_json,
-)
+from app.core.utils.llm_client import calculate_cost, GEMINI_FLASH_PRICING
 from app.models.weekly_digest import WeeklyContentResponse
 from app.repositories.daily_digest_repository import DailyDigestRepository
 from app.repositories.weekly_digest_repository import WeeklyDigestRepository
@@ -102,12 +99,12 @@ async def load_week_data_node(state: WeeklyDigestState) -> WeeklyDigestState:
 
 
 async def generate_weekly_node(state: WeeklyDigestState) -> WeeklyDigestState:
-    """Generate weekly digest content using LLM.
+    """Generate weekly digest content using LLM with native structured output.
 
     This node:
     1. Formats daily digest contexts into prompt
-    2. Calls Gemini with structured output
-    3. Parses JSON response into WeeklyContentResponse
+    2. Calls Gemini with native structured output (guaranteed valid JSON)
+    3. Validates response as WeeklyContentResponse
     4. Generates markdown and HTML versions
     """
     week_start = parse_date(state["week_start_date"])
@@ -152,47 +149,53 @@ async def generate_weekly_node(state: WeeklyDigestState) -> WeeklyDigestState:
             }
         )
 
-        # Build prompt content for Google GenAI
-        system_content = ""
-        user_content = ""
+        # Convert Opik messages to LangChain messages
+        langchain_messages = []
         for msg in formatted_messages:
             content = str(msg.get("content", ""))
             if msg.get("role") == "system":
-                system_content = content
+                langchain_messages.append(SystemMessage(content=content))
             else:
-                user_content = content
+                langchain_messages.append(HumanMessage(content=content))
 
-        # Add JSON schema instruction
-        schema_instruction = f"""
-
-Respond with valid JSON matching this exact schema:
-{json.dumps(WeeklyContentResponse.model_json_schema())}
-
-Your response must be valid JSON only, no additional text."""
-
-        user_content += schema_instruction
-
-        # Get GenAI client
-        client = get_genai_client()
+        # Initialize LangChain ChatGoogleGenerativeAI
         model_name = settings.analysis_model_name
-
-        # Make LLM call
-        start_time = time.time()
-        response = client.models.generate_content(
+        llm = ChatGoogleGenerativeAI(
             model=model_name,
-            contents=user_content,
-            config=GenerateContentConfig(
-                systemInstruction=system_content,
-                temperature=0.3,  # Slightly higher for synthesis creativity
-            )
+            temperature=0.3,  # Low for structured output consistency
+            api_key=settings.google_api_key,
         )
+
+        # Create structured output version using native JSON schema method
+        # This guarantees valid JSON matching the schema - no parsing needed!
+        structured_llm = llm.with_structured_output(
+            schema=WeeklyContentResponse.model_json_schema(),
+            method="json_schema"
+        )
+
+        # Make LLM call - returns dict directly (validated against schema)
+        start_time = time.time()
+        structured_response_dict = await structured_llm.ainvoke(langchain_messages)
         processing_time = time.time() - start_time
 
-        # Extract token usage
-        usage = extract_token_usage(response)
+        # Convert dict to Pydantic model
+        if not isinstance(structured_response_dict, dict):
+            structured_response_dict = dict(structured_response_dict) if hasattr(structured_response_dict, '__dict__') else {}
 
-        # Parse JSON response
-        weekly_content = parse_llm_json(response.text, WeeklyContentResponse)
+        weekly_content = WeeklyContentResponse(**structured_response_dict)
+
+        # Estimate token usage (structured_llm doesn't expose usage_metadata)
+        # Using ~4 chars per token approximation
+        input_text = "\n".join([
+            msg.content if hasattr(msg, 'content') and isinstance(msg.content, str)
+            else str(msg.content) if hasattr(msg, 'content')
+            else str(msg)
+            for msg in langchain_messages
+        ])
+        output_text = json.dumps(structured_response_dict)
+        input_tokens = max(1, len(input_text) // 4)
+        output_tokens = max(1, len(output_text) // 4)
+        cost = calculate_cost(input_tokens, output_tokens, GEMINI_FLASH_PRICING)
 
         # Ensure stats are populated
         if not weekly_content.stats.days_covered:
@@ -232,11 +235,11 @@ Your response must be valid JSON only, no additional text."""
 
         # Create metrics dict
         metrics = {
-            "workflow_version": "2.0",
+            "workflow_version": "2.1",  # Updated for structured output
             "prompt_version": WeeklyDigestPrompts.CURRENT_VERSION,
-            "input_tokens": usage.input_tokens,
-            "output_tokens": usage.output_tokens,
-            "total_cost": usage.cost_usd,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_cost": cost,
             "processing_time_seconds": processing_time,
         }
 
@@ -256,17 +259,18 @@ Your response must be valid JSON only, no additional text."""
                         "confidence_score": weekly_content.confidence_score,
                         "days_with_content": days_with_content,
                         "total_videos": total_videos,
-                        "tokens_input": usage.input_tokens,
-                        "tokens_output": usage.output_tokens,
-                        "cost_usd": usage.cost_usd,
+                        "tokens_input": input_tokens,
+                        "tokens_output": output_tokens,
+                        "cost_usd": cost,
+                        "structured_output": True,
                     }
                 )
         except (AttributeError, TypeError):
             pass
 
         logger.info(
-            f"Weekly digest generation completed: {usage.total_tokens} tokens, "
-            f"${usage.cost_usd:.6f}, {processing_time:.2f}s"
+            f"Weekly digest generation completed: {input_tokens + output_tokens} tokens, "
+            f"${cost:.6f}, {processing_time:.2f}s (structured output)"
         )
 
         return state
