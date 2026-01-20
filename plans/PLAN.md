@@ -40,5 +40,6 @@ Batch 3:
 BACKLOG:
 - add prevous day(s) section to the digest.
 - would be cool to allow user to easily share a video/insights from any daily/weekly digest.
+- add rss feed or fetchable content for newsletter.
 BONUS: - add weekly & monthly recaps (different abstraction levels for newsletter fatigue)
 
