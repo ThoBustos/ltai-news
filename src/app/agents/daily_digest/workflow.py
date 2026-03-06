@@ -8,13 +8,45 @@ from langgraph.graph import StateGraph, START, END
 from app.core.logging import logger
 from app.core.opik_manager import opik_manager
 from app.config.settings import settings
-from app.models.daily_digest import DigestGenerationResult
+from app.models.daily_digest import DigestGenerationResult, DigestContentResponseV3
 from app.agents.daily_digest.state import DailyDigestState
 from app.agents.daily_digest.nodes import (
     load_data_node,
     generate_digest_node,
     save_results_node,
 )
+
+
+async def create_checkpointer(database_url: str):
+    """Create a PostgreSQL-backed checkpointer for production workflow resilience.
+
+    If digest generation fails mid-run, the workflow can resume from the last
+    checkpoint instead of starting from scratch.
+
+    Args:
+        database_url: PostgreSQL connection string (e.g. from settings.database_url)
+
+    Returns:
+        Configured AsyncPostgresSaver ready to use with workflow.compile(checkpointer=...)
+
+    Usage:
+        checkpointer = await create_checkpointer(settings.database_url)
+        compiled = workflow.compile(checkpointer=checkpointer)
+        # Must pass thread_id in config when invoking:
+        await compiled.ainvoke(state, config={"configurable": {"thread_id": date_str}})
+    """
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+    from psycopg_pool import AsyncConnectionPool
+    from psycopg.rows import dict_row
+
+    pool = AsyncConnectionPool(
+        conninfo=database_url,
+        max_size=10,
+        kwargs={"autocommit": True, "row_factory": dict_row},
+    )
+    checkpointer = AsyncPostgresSaver(pool)
+    await checkpointer.setup()
+    return checkpointer
 
 
 def create_daily_digest_workflow():
@@ -28,11 +60,18 @@ def create_daily_digest_workflow():
     Returns:
         Compiled and tracked LangGraph workflow
     """
+    from langgraph.types import RetryPolicy
+    from app.core.utils.llm_client import GeminiStructuredOutputError
+
     workflow = StateGraph(DailyDigestState)
 
-    # Add nodes
+    # Add nodes — generate_digest retries on GeminiStructuredOutputError
     workflow.add_node("load_data", load_data_node)
-    workflow.add_node("generate_digest", generate_digest_node)
+    workflow.add_node(
+        "generate_digest",
+        generate_digest_node,
+        retry=RetryPolicy(max_attempts=3, retry_on=(GeminiStructuredOutputError,)),
+    )
     workflow.add_node("save_results", save_results_node)
 
     # Define sequential edges
@@ -111,14 +150,22 @@ async def generate_daily_digest(target_date: date) -> Optional[DigestGenerationR
                 errors=errors or ["No digest content generated"],
             )
 
-        # Build successful result
+        # Build successful result (V3 has no stats — derive from state)
+        video_analyses = final_state.get("video_analyses", [])
+        if isinstance(digest_content, DigestContentResponseV3):
+            videos_included = len(video_analyses)
+            channels_included = len(set(v.get("channel_id", "") for v in video_analyses if v.get("channel_id")))
+        else:
+            videos_included = digest_content.stats.video_count
+            channels_included = len(digest_content.stats.channels)
+
         result = DigestGenerationResult(
             success=True,
             digest_id=digest_id,
             publish_date=date_str,
             title=digest_content.title,
-            videos_included=digest_content.stats.video_count,
-            channels_included=len(digest_content.stats.channels),
+            videos_included=videos_included,
+            channels_included=channels_included,
             references_extracted=final_state.get("references_extracted", 0),
             total_tokens=(metrics.input_tokens + metrics.output_tokens) if metrics else 0,
             total_cost=metrics.total_cost if metrics else 0.0,

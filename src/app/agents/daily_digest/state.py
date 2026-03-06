@@ -1,8 +1,8 @@
 """Type-safe state definition for daily digest workflow."""
 
-from typing import Dict, Any, List, TypedDict, NotRequired
+from typing import Dict, Any, List, Union, TypedDict, NotRequired
 
-from app.models.daily_digest import DigestContentResponse, DigestMetrics
+from app.models.daily_digest import DigestContentResponse, DigestContentResponseV3, DigestMetrics
 
 
 class DailyDigestState(TypedDict):
@@ -23,7 +23,7 @@ class DailyDigestState(TypedDict):
     channel_stats: NotRequired[Dict[str, Dict[str, Any]]]  # Channel aggregates
 
     # LLM output (from generate_digest_node)
-    digest_content: NotRequired[DigestContentResponse]
+    digest_content: NotRequired[Union[DigestContentResponse, DigestContentResponseV3]]
 
     # Rendered output
     formatted_markdown: NotRequired[str]

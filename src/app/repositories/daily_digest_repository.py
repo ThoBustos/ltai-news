@@ -6,10 +6,12 @@ from uuid import UUID
 
 from app.core.logging import logger
 from app.db.supabase import supabase
+from typing import Union
 from app.models.daily_digest import (
     DailyDigestDB,
     DigestReference,
     DigestContentResponse,
+    DigestContentResponseV3,
     DigestMetrics,
 )
 
@@ -25,7 +27,7 @@ class DailyDigestRepository:
     async def save_digest(
         self,
         publish_date: date,
-        content: DigestContentResponse,
+        content: Union[DigestContentResponse, DigestContentResponseV3],
         metrics: DigestMetrics,
         formatted_markdown: str,
         formatted_html: str,
@@ -49,16 +51,21 @@ class DailyDigestRepository:
         logger.info(f"Saving digest for {publish_date}")
 
         try:
+            is_v3 = isinstance(content, DigestContentResponseV3)
+            schema_version = "v3" if is_v3 else "v2"
+            description = None if is_v3 else (content.daily_tldr[:500] if content.daily_tldr else None)
+            video_count = len(source_video_ids) if is_v3 else content.stats.video_count
+
             # Prepare data for database
             data = {
                 "publish_date": publish_date.isoformat(),
                 "title": content.title,
-                "description": content.daily_tldr[:500] if content.daily_tldr else None,
+                "description": description,
                 "formatted_html": formatted_html,
                 "formatted_markdown": formatted_markdown,
                 "content_json": content.model_dump(mode="json"),
                 "source_video_ids": source_video_ids,
-                "video_count": content.stats.video_count,
+                "video_count": video_count,
                 "channels_included": channels_included,
                 "keywords": content.keywords,
                 "confidence_score": content.confidence_score,
@@ -66,6 +73,7 @@ class DailyDigestRepository:
                 "total_tokens_output": metrics.output_tokens,
                 "cost_estimate": metrics.total_cost,
                 "agent_metadata": {
+                    "schema_version": schema_version,
                     "workflow_version": metrics.workflow_version,
                     "processing_time_seconds": metrics.processing_time_seconds,
                     "videos_analyzed": metrics.videos_analyzed,
@@ -139,15 +147,19 @@ class DailyDigestRepository:
             logger.error(f"Failed to save empty digest for {publish_date}: {e}", exc_info=True)
             return None
 
-    async def get_digest_by_date(self, target_date: date) -> Optional[DailyDigestDB]:
+    async def get_digest_by_date(self, target_date: date | str) -> Optional[DailyDigestDB]:
         """Get digest for a specific date.
 
         Args:
-            target_date: Date to get digest for
+            target_date: Date to get digest for (date object or ISO string YYYY-MM-DD)
 
         Returns:
             DailyDigestDB if exists, None otherwise
         """
+        # Normalize to date object
+        if isinstance(target_date, str):
+            target_date = date.fromisoformat(target_date)
+
         try:
             result = (
                 self.client.table(self.digests_table)
@@ -197,15 +209,50 @@ class DailyDigestRepository:
             logger.error(f"Failed to get digest {digest_id}: {e}", exc_info=True)
             return None
 
-    async def has_digest(self, target_date: date) -> bool:
+    async def update_tweet_ids(self, digest_id: str, tweet_ids: List[str]) -> bool:
+        """Update the source_tweet_ids for a digest.
+
+        Args:
+            digest_id: UUID of the digest
+            tweet_ids: List of tweet IDs from posted thread
+
+        Returns:
+            True if update succeeded, False otherwise
+        """
+        logger.info(f"Updating tweet IDs for digest {digest_id}")
+
+        try:
+            result = (
+                self.client.table(self.digests_table)
+                .update({"source_tweet_ids": tweet_ids})
+                .eq("id", digest_id)
+                .execute()
+            )
+
+            if result.data and len(result.data) > 0:
+                logger.info(f"Updated digest {digest_id} with {len(tweet_ids)} tweet IDs")
+                return True
+
+            logger.warning(f"No data returned from tweet IDs update for digest {digest_id}")
+            return False
+
+        except Exception as e:
+            logger.error(f"Failed to update tweet IDs for digest {digest_id}: {e}", exc_info=True)
+            return False
+
+    async def has_digest(self, target_date: date | str) -> bool:
         """Check if a digest exists for the given date.
 
         Args:
-            target_date: Date to check
+            target_date: Date to check (date object or ISO string YYYY-MM-DD)
 
         Returns:
             True if digest exists, False otherwise
         """
+        # Normalize to date object
+        if isinstance(target_date, str):
+            target_date = date.fromisoformat(target_date)
+
         try:
             result = (
                 self.client.table(self.digests_table)
@@ -274,18 +321,24 @@ class DailyDigestRepository:
 
     async def get_digests_in_range(
         self,
-        start_date: date,
-        end_date: date,
+        start_date: date | str,
+        end_date: date | str,
     ) -> List[DailyDigestDB]:
         """Get all digests within a date range.
 
         Args:
-            start_date: Start of range (inclusive)
-            end_date: End of range (inclusive)
+            start_date: Start of range (inclusive) - date object or ISO string
+            end_date: End of range (inclusive) - date object or ISO string
 
         Returns:
             List of digests in the range ordered by publish_date asc
         """
+        # Normalize to date objects
+        if isinstance(start_date, str):
+            start_date = date.fromisoformat(start_date)
+        if isinstance(end_date, str):
+            end_date = date.fromisoformat(end_date)
+
         try:
             result = (
                 self.client.table(self.digests_table)
@@ -304,8 +357,8 @@ class DailyDigestRepository:
 
     async def get_references_in_date_range(
         self,
-        start_date: date,
-        end_date: date,
+        start_date: date | str,
+        end_date: date | str,
         min_mentions: int = 1,
     ) -> List[DigestReference]:
         """Get references mentioned in digests within a date range.
@@ -314,13 +367,19 @@ class DailyDigestRepository:
         in digests from the specified date range.
 
         Args:
-            start_date: Start of range (inclusive)
-            end_date: End of range (inclusive)
+            start_date: Start of range (inclusive) - date object or ISO string
+            end_date: End of range (inclusive) - date object or ISO string
             min_mentions: Minimum mention count to include
 
         Returns:
             List of references ordered by mention_count desc
         """
+        # Normalize to date objects
+        if isinstance(start_date, str):
+            start_date = date.fromisoformat(start_date)
+        if isinstance(end_date, str):
+            end_date = date.fromisoformat(end_date)
+
         try:
             # 1. Get digest IDs for the date range
             digests = await self.get_digests_in_range(start_date, end_date)
@@ -359,7 +418,7 @@ class DailyDigestRepository:
         references: List[Dict[str, Any]],
         digest_id: str,
         video_ids: List[str],
-        target_date: date,
+        target_date: date | str,
     ) -> int:
         """Upsert references from a digest.
 
@@ -367,22 +426,27 @@ class DailyDigestRepository:
             references: List of reference dicts with type, name, author, url, description
             digest_id: UUID of the digest
             video_ids: List of video IDs where references were mentioned
-            target_date: Date of first mention
+            target_date: Date of first mention (date object or ISO string)
 
         Returns:
             Number of references upserted
         """
+        # Normalize to date object
+        if isinstance(target_date, str):
+            target_date = date.fromisoformat(target_date)
+
         logger.info(f"Upserting {len(references)} references for digest {digest_id}")
         upserted = 0
 
         for ref in references:
-            try:
-                ref_type = ref.get("reference_type") or ref.get("type", "concept")
-                name = ref.get("name", "").strip()
-                if not name:
-                    continue
+            ref_type = ref.get("reference_type") or ref.get("type", "concept")
+            name = ref.get("name", "").strip()
+            if not name:
+                continue
 
-                # Check if reference exists
+            # Check if reference exists
+            existing_data = None
+            try:
                 existing = (
                     self.client.table(self.references_table)
                     .select("id, mention_count, digest_ids, video_ids")
@@ -391,10 +455,17 @@ class DailyDigestRepository:
                     .single()
                     .execute()
                 )
+                existing_data = existing.data
+            except Exception as e:
+                error_str = str(e)
+                # PGRST116 = no rows found, which is expected for new references
+                if "PGRST116" not in error_str and "No rows" not in error_str:
+                    logger.warning(f"Failed to check existing reference {name}: {e}")
+                    continue
 
-                if existing.data:
+            try:
+                if existing_data:
                     # Update existing reference
-                    existing_data = existing.data
                     existing_digest_ids = existing_data.get("digest_ids", []) or []
                     existing_video_ids = existing_data.get("video_ids", []) or []
 
@@ -409,7 +480,6 @@ class DailyDigestRepository:
                         "description": ref.get("description") or existing_data.get("description"),
                         "url": ref.get("url") or existing_data.get("url"),
                     }).eq("id", existing_data["id"]).execute()
-
                 else:
                     # Insert new reference
                     self.client.table(self.references_table).insert({
@@ -428,10 +498,7 @@ class DailyDigestRepository:
                 upserted += 1
 
             except Exception as e:
-                error_str = str(e)
-                # Ignore "no rows" errors from single() when reference doesn't exist
-                if "PGRST116" not in error_str and "No rows" not in error_str:
-                    logger.warning(f"Failed to upsert reference {ref.get('name')}: {e}")
+                logger.warning(f"Failed to upsert reference {name}: {e}")
 
         logger.info(f"Upserted {upserted} references for digest {digest_id}")
         return upserted

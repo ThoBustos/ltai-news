@@ -1,21 +1,15 @@
 """Workflow nodes for daily digest generation."""
 
 import time
-import json
 from datetime import datetime, timezone, date
 
 import opik
-from google.genai.types import GenerateContentConfig
 
 from app.core.logging import logger
 from app.config.settings import settings
 from app.core.utils.time_window import get_window, parse_date
-from app.core.utils.llm_client import (
-    get_genai_client,
-    extract_token_usage,
-    parse_llm_json,
-)
-from app.models.daily_digest import DigestContentResponse, DigestMetrics
+from app.core.utils.llm_client import get_genai_client, extract_token_usage, generate_structured
+from app.models.daily_digest import DigestContentResponse, DigestContentResponseV3, DigestMetrics
 from app.repositories.video_repository import VideoRepository
 from app.repositories.video_analysis_repository import VideoAnalysisRepository
 from app.repositories.channel_repository import ChannelRepository
@@ -194,8 +188,14 @@ async def generate_digest_node(state: DailyDigestState) -> DailyDigestState:
         # Format video contexts - V2 returns tuple (context, channel_list)
         videos_context, channel_list = DailyDigestPrompts.format_all_videos_context(video_analyses)
 
-        # Get prompt
-        chat_prompt = DailyDigestPrompts.get_digest_generation_prompt()
+        # Choose schema version based on env var (default: v3)
+        schema_version = settings.digest_schema_version
+        if schema_version == "v3":
+            chat_prompt = DailyDigestPrompts.get_digest_generation_prompt_v3()
+            response_schema = DigestContentResponseV3
+        else:
+            chat_prompt = DailyDigestPrompts.get_digest_generation_prompt_v2()
+            response_schema = DigestContentResponse
 
         # Format with variables
         formatted_messages = chat_prompt.format(
@@ -211,77 +211,66 @@ async def generate_digest_node(state: DailyDigestState) -> DailyDigestState:
         system_content = ""
         user_content = ""
         for msg in formatted_messages:
+            if msg is None:
+                continue
             content = str(msg.get("content", ""))
             if msg.get("role") == "system":
                 system_content = content
             else:
                 user_content = content
 
-        # Add JSON schema instruction
-        # NOTE: Using compact JSON (no indent) to avoid brace patterns like "{\n  " that
-        # can be misinterpreted as format placeholders by Opik's tracing
-        schema_instruction = f"""
-
-Respond with valid JSON matching this exact schema:
-{json.dumps(DigestContentResponse.model_json_schema())}
-
-IMPORTANT: Populate the stats.channels array with actual channel data from the videos.
-Your response must be valid JSON only, no additional text."""
-
-        user_content += schema_instruction
-
-        # Get GenAI client
+        # Get GenAI client and model name
         client = get_genai_client()
         model_name = settings.analysis_model_name
 
-        # Make LLM call
+        # Use hybrid approach - tries structured, falls back to parsing
         start_time = time.time()
-        response = client.models.generate_content(
-            model=model_name,
+        digest_content, usage = await generate_structured(
             contents=user_content,
-            config=GenerateContentConfig(
-                systemInstruction=system_content,
-                temperature=0.2,  # Low for deterministic structured output
-            )
+            response_model=response_schema,
+            system_instruction=system_content,
+            temperature=0.2,
+            model_name=model_name,
+            client=client,
+            max_output_tokens=12000,  # Large response model needs more tokens
         )
         processing_time = time.time() - start_time
 
-        # Extract token usage and cost using shared utility
-        usage = extract_token_usage(response)
+        if isinstance(digest_content, DigestContentResponseV3):
+            # V3: no stats, no formatters
+            formatted_markdown = ""
+            formatted_html = ""
+        else:
+            # V2: Ensure stats are populated correctly
+            if not digest_content.stats.channels and channel_stats:
+                from app.models.daily_digest import ChannelStat
+                digest_content.stats.channels = [
+                    ChannelStat(
+                        channel_id=cs["channel_id"],
+                        channel_name=cs["channel_name"],
+                        video_count=cs["video_count"],
+                        thumbnail_url=cs.get("thumbnail_url"),
+                        channel_url=f"https://youtube.com/channel/{cs['channel_id']}",
+                    )
+                    for cs in channel_stats.values()
+                ]
+                digest_content.stats.video_count = len(video_analyses)
+                total_duration = sum(cs.get("total_duration_seconds", 0) for cs in channel_stats.values())
+                digest_content.stats.total_duration_minutes = total_duration // 60
 
-        # Parse JSON response using shared utility (handles markdown fences)
-        digest_content = parse_llm_json(response.text, DigestContentResponse)
+            # V2.2: Ensure channel_url is always populated (even if LLM generated stats)
+            for channel in digest_content.stats.channels:
+                if not channel.channel_url and channel.channel_id:
+                    channel.channel_url = f"https://youtube.com/channel/{channel.channel_id}"
 
-        # Ensure stats are populated correctly
-        if not digest_content.stats.channels and channel_stats:
-            from app.models.daily_digest import ChannelStat
-            digest_content.stats.channels = [
-                ChannelStat(
-                    channel_id=cs["channel_id"],
-                    channel_name=cs["channel_name"],
-                    video_count=cs["video_count"],
-                    thumbnail_url=cs.get("thumbnail_url"),
-                    channel_url=f"https://youtube.com/channel/{cs['channel_id']}",
-                )
-                for cs in channel_stats.values()
-            ]
-            digest_content.stats.video_count = len(video_analyses)
-            total_duration = sum(cs.get("total_duration_seconds", 0) for cs in channel_stats.values())
-            digest_content.stats.total_duration_minutes = total_duration // 60
+            # V2: Calculate read time if not set
+            if not digest_content.stats.estimated_read_minutes:
+                digest_content.stats.estimated_read_minutes = _calculate_read_time(digest_content)
 
-        # V2.2: Ensure channel_url is always populated (even if LLM generated stats)
-        for channel in digest_content.stats.channels:
-            if not channel.channel_url and channel.channel_id:
-                channel.channel_url = f"https://youtube.com/channel/{channel.channel_id}"
-
-        # V2: Calculate read time if not set
-        if not digest_content.stats.estimated_read_minutes:
-            digest_content.stats.estimated_read_minutes = _calculate_read_time(digest_content)
-
-        # Generate formatted versions
-        target_date = parse_date(state["target_date"])
-        formatted_markdown = format_digest_markdown(digest_content, target_date)
-        formatted_html = format_digest_html(digest_content, target_date)
+            # Generate formatted versions
+            target_date = parse_date(state["target_date"])
+            formatted_markdown = format_digest_markdown(digest_content, target_date)
+            formatted_html = format_digest_html(digest_content, target_date)
 
         # Create metrics
         metrics = DigestMetrics(
@@ -307,7 +296,8 @@ Your response must be valid JSON only, no additional text."""
             if current_span:
                 current_span.update(
                     metadata={
-                        "prompt_name": "daily-digest-generation",
+                        "prompt_name": chat_prompt.name,
+                        "schema_version": schema_version,
                         "confidence_score": digest_content.confidence_score,
                         "videos_count": len(video_analyses),
                         "tokens_input": usage.input_tokens,
@@ -383,70 +373,71 @@ async def save_results_node(state: DailyDigestState) -> DailyDigestState:
 
         state["digest_id"] = digest_id
 
-        # Extract and upsert references
-        references = []
+        # Extract and upsert references (V2 only — V3 uses flat string lists)
+        refs_count = 0
+        if not isinstance(digest_content, DigestContentResponseV3):
+            references = []
 
-        # Books
-        for ref in digest_content.references_index.books:
-            references.append({
-                "reference_type": "book",
-                "name": ref.name,
-                "author": ref.author,
-                "url": ref.url,
-                "description": ref.description,
-            })
+            # Books
+            for ref in digest_content.references_index.books:
+                references.append({
+                    "reference_type": "book",
+                    "name": ref.name,
+                    "author": ref.author,
+                    "url": ref.url,
+                    "description": ref.description,
+                })
 
-        # Papers
-        for ref in digest_content.references_index.papers:
-            references.append({
-                "reference_type": "paper",
-                "name": ref.name,
-                "author": ref.author,
-                "url": ref.url,
-                "description": ref.description,
-            })
+            # Papers
+            for ref in digest_content.references_index.papers:
+                references.append({
+                    "reference_type": "paper",
+                    "name": ref.name,
+                    "author": ref.author,
+                    "url": ref.url,
+                    "description": ref.description,
+                })
 
-        # Frameworks
-        for ref in digest_content.references_index.frameworks:
-            references.append({
-                "reference_type": "framework",
-                "name": ref.name,
-                "url": ref.url,
-                "description": ref.description,
-            })
+            # Frameworks
+            for ref in digest_content.references_index.frameworks:
+                references.append({
+                    "reference_type": "framework",
+                    "name": ref.name,
+                    "url": ref.url,
+                    "description": ref.description,
+                })
 
-        # Concepts
-        for ref in digest_content.references_index.concepts:
-            references.append({
-                "reference_type": "concept",
-                "name": ref.name,
-                "description": ref.description,
-            })
+            # Concepts
+            for ref in digest_content.references_index.concepts:
+                references.append({
+                    "reference_type": "concept",
+                    "name": ref.name,
+                    "description": ref.description,
+                })
 
-        # People
-        for ref in digest_content.references_index.people:
-            references.append({
-                "reference_type": "person",
-                "name": ref.name,
-                "description": ref.description,
-            })
+            # People
+            for ref in digest_content.references_index.people:
+                references.append({
+                    "reference_type": "person",
+                    "name": ref.name,
+                    "description": ref.description,
+                })
 
-        # Communities
-        for ref in digest_content.references_index.communities:
-            references.append({
-                "reference_type": "community",
-                "name": ref.name,
-                "url": ref.url,
-                "description": ref.description,
-            })
+            # Communities
+            for ref in digest_content.references_index.communities:
+                references.append({
+                    "reference_type": "community",
+                    "name": ref.name,
+                    "url": ref.url,
+                    "description": ref.description,
+                })
 
-        # Upsert references
-        refs_count = await digest_repo.upsert_references(
-            references=references,
-            digest_id=digest_id,
-            video_ids=source_video_ids,
-            target_date=target_date,
-        )
+            refs_count = await digest_repo.upsert_references(
+                references=references,
+                digest_id=digest_id,
+                video_ids=source_video_ids,
+                target_date=target_date,
+            )
 
         state["references_extracted"] = refs_count
 
