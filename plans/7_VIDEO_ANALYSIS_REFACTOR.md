@@ -900,3 +900,4 @@ curl -X POST "http://localhost:8000/api/orchestrator/process-video/VIDEO_ID"
 - **Model name** uses `settings.analysis_model_name` (default: `gemini-3-flash-preview`)
 - **Cost calculation** uses per-million pricing (verify current Gemini rates)
 
+

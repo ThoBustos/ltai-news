@@ -221,3 +221,4 @@ ORDER BY tablename;
 -- daily_digests should have both public_read (SELECT) and service_all (ALL)
 -- All other tables should only have service_only (ALL)
 ```
+

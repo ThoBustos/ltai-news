@@ -941,3 +941,4 @@ def generate_digest_section(analysis: VideoAnalysisComplete) -> str:
 - [ ] All new fields saved to database
 - [ ] Digest can use new fields for richer output
 
+

@@ -204,6 +204,48 @@ This endpoint will:
 3. Reset their status to "collected"
 4. Re-run the analysis pipeline
 
+### Weekly Digest Operations
+
+#### Generate Weekly Digest
+Generate a weekly summary digest (requires daily digests for the week to exist):
+
+```bash
+# Synchronous (waits for completion)
+curl -X POST "http://localhost:8000/api/orchestrator/generate-weekly/2025-01-27"
+
+# Asynchronous (returns immediately, runs in background)
+curl -X POST "http://localhost:8000/api/orchestrator/generate-weekly/2025-01-27/async"
+```
+
+**Note:** The date should be the **Monday** of the week you want to generate (e.g., `2025-01-27` for the week of Jan 27 - Feb 2).
+
+#### Get Weekly Digest Content
+Retrieve generated weekly digests:
+
+```bash
+# Get the latest weekly digest
+curl "http://localhost:8000/api/orchestrator/weekly/latest"
+
+# Get a specific week's digest
+curl "http://localhost:8000/api/orchestrator/weekly/2025-01-27"
+```
+
+### References & Entities
+
+#### Get Top References
+Retrieve the most frequently mentioned people, tools, and resources across all analyses:
+
+```bash
+curl "http://localhost:8000/api/orchestrator/references/top"
+```
+
+#### Search References
+Search for a specific reference by name:
+
+```bash
+curl "http://localhost:8000/api/orchestrator/references/search/Sam%20Altman"
+```
+
 ### Channel Management
 
 #### List Tracked Channels
@@ -241,6 +283,77 @@ open http://localhost:8000/docs
 ```
 
 **Note:** Date format is `YYYY-MM-DD` (e.g., `2025-01-20`). Replace `localhost:8000` with your production server URL when deployed.
+
+---
+
+## X/Twitter Setup
+
+This project can automatically post daily digest threads to X (formerly Twitter) using OAuth 2.0 PKCE authentication.
+
+### Quick Start
+
+1. **Developer Account**: Apply for X Developer access at [developer.twitter.com](https://developer.twitter.com)
+2. **Create App**: Create a new project and app in the Developer Portal
+3. **Configure Authentication**:
+   - App permissions: **"Read and write"** (required for posting!)
+   - Type: **"Web App"**
+   - Callback URI: `http://127.0.0.1:8080/callback`
+4. **Generate Tokens**:
+   ```bash
+   source .venv/bin/activate
+   python scripts/generate_twitter_oauth2_tokens_auto.py
+   ```
+5. **Update `.env`**:
+   ```env
+   TWITTER_OAUTH2_CLIENT_ID=<from_developer_portal>
+   TWITTER_OAUTH2_CLIENT_SECRET=<from_developer_portal>
+   TWITTER_OAUTH2_ACCESS_TOKEN=<from_script_output>
+   TWITTER_OAUTH2_REFRESH_TOKEN=<from_script_output>
+   AUTO_POST_TO_X=false  # Set to true after testing
+   ```
+6. **Test Posting**:
+   ```bash
+   curl -X POST "http://localhost:8000/api/x-thread/post-to-x/2025-01-24"
+   ```
+
+### Documentation
+
+For detailed setup instructions, troubleshooting, and security best practices:
+- **[X Authentication Setup Guide](docs/X_AUTHENTICATION_SETUP.md)** - Complete setup walkthrough
+- **[OAuth 2.0 Migration Summary](docs/OAUTH2_MIGRATION_SUMMARY.md)** - Migration from OAuth 1.0a
+
+### Authentication Notes
+
+- **OAuth 2.0 PKCE Only**: This project uses OAuth 2.0 with PKCE (OAuth 1.0a removed)
+- **Local Development**: Uses HTTP localhost callback (`http://127.0.0.1:8080/callback`) which is safe and standard practice
+- **Auto-Refresh**: Tokens automatically refresh every 2 hours using the refresh token
+- **Security**: Never commit `.env` to git - credentials are gitignored
+
+### Posting Threads
+
+#### Preview Thread
+Preview the thread content before posting (useful for testing format):
+
+```bash
+curl "http://localhost:8000/api/x-thread/preview/2025-01-27"
+```
+
+#### Manual Post
+```bash
+curl -X POST "http://localhost:8000/api/x-thread/post-to-x/YYYY-MM-DD"
+```
+
+#### Auto-Post (Phase 5 of Daily Pipeline)
+Set `AUTO_POST_TO_X=true` in `.env` to automatically post threads after digest generation.
+
+#### Thread Format
+Threads include:
+- Opening hook with date
+- Video summaries with links
+- Closing CTA
+- Auto-threaded replies
+
+**Example:** [See X Authentication Setup Guide](docs/X_AUTHENTICATION_SETUP.md#testing) for full testing procedures.
 
 ---
 
@@ -360,14 +473,10 @@ config=GenerateContentConfig(
 
 4. **Structured output eliminates JSON parsing** - no need for manual extraction of JSON from markdown code blocks. The response is guaranteed valid JSON. (idk why models tend to love to try to parse jsons instead of using existing structured outputs existing logics.)
 
-**Results:**
-
-| Metric | Before | After |
+**Results:**| Metric | Before | After |
 |--------|--------|-------|
 | Video sections | 4/13 (31%) | **13/13 (100%)** |
 | deep_analysis | Often empty | 100-137 words each |
 | key_quotes | Often missing | 2 per video |
 | Cost | Unknown | **$0.006** |
-| Reliability | Inconsistent | **Deterministic** |
-
-**Reference:** `src/app/agents/daily_digest/nodes.py:249-260`
+| Reliability | Inconsistent | **Deterministic** |**Reference:** `src/app/agents/daily_digest/nodes.py:249-260`
