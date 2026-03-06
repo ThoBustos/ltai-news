@@ -61,9 +61,10 @@ uv.lock
 htmlcov/
 
 # Logs
+logs/
 *.log
+*.log.zip
 
 # Supabase
 supabase/.temp/
 supabase/.branches/
-
