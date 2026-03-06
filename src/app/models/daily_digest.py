@@ -9,6 +9,34 @@ from pydantic import BaseModel, Field, ConfigDict
 
 # === LLM Response Schema Models ===
 
+class SocialLinks(BaseModel):
+    """Social media links for references - explicit model for Gemini compatibility."""
+    twitter: Optional[str] = Field(
+        default=None,
+        description="Twitter/X handle or URL"
+    )
+    linkedin: Optional[str] = Field(
+        default=None,
+        description="LinkedIn profile URL"
+    )
+    github: Optional[str] = Field(
+        default=None,
+        description="GitHub profile URL"
+    )
+    youtube: Optional[str] = Field(
+        default=None,
+        description="YouTube channel URL"
+    )
+    website: Optional[str] = Field(
+        default=None,
+        description="Personal or organization website URL"
+    )
+
+    def to_dict(self) -> Dict[str, str]:
+        """Convert to dict for backward compatibility."""
+        return {k: v for k, v in self.model_dump().items() if v is not None}
+
+
 class ChannelStat(BaseModel):
     """Statistics for a single channel in the digest."""
     channel_id: str
@@ -192,11 +220,10 @@ class ReferenceItem(BaseModel):
     url: Optional[str] = None
     description: Optional[str] = None
     source_video_id: Optional[str] = None
-    # V2: Social links for people/orgs
-    social_links: Dict[str, str] = Field(
-        default_factory=dict,
-        description="Social links for people/orgs: "
-        "{'twitter': '@handle', 'linkedin': 'url', 'website': 'url'}"
+    # Explicit model for Gemini native structured output compatibility (no Dict types)
+    social_links: Optional[SocialLinks] = Field(
+        default=None,
+        description="Social links for people/orgs. Only populate if explicitly mentioned."
     )
 
 
@@ -271,6 +298,81 @@ class DigestContentResponse(BaseModel):
     conclusion: str = Field(description="Closing thought that ties everything together")
     keywords: List[str] = Field(description="8-12 keywords for categorization")
     confidence_score: float = Field(ge=0.0, le=1.0, description="Overall confidence (0.0-1.0)")
+
+
+# === V3 Schema — Minimalist format ===
+
+class VideoSectionV3(BaseModel):
+    """Per-video section for V3 digest — minimalist."""
+    video_id: str
+    title: str
+    speaker: str = Field(description="Primary speaker name. E.g. 'Andrej Karpathy'")
+    channel_name: str
+    duration_minutes: int
+    video_url: str
+    framing: str = Field(
+        description="1-2 sentences. What this video is actually about. Who is speaking. Why it matters today. No em dashes."
+    )
+    bullets: List[str] = Field(
+        description="4-8 key points. Each is one complete thought with specific names, numbers, or claims. No em dashes."
+    )
+
+
+class ReferencesV3(BaseModel):
+    """Flat reference lists for V3 digest."""
+    people: List[str] = Field(
+        default_factory=list,
+        description="Names mentioned. Include URL if explicitly in video context. E.g. 'Andrej Karpathy (x.com/karpathy)'"
+    )
+    tools: List[str] = Field(
+        default_factory=list,
+        description="Tools, products, frameworks mentioned. E.g. 'LangGraph (langchain.com)'"
+    )
+    papers: List[str] = Field(
+        default_factory=list,
+        description="Papers or books mentioned. E.g. 'Attention Is All You Need'"
+    )
+
+
+class DigestContentResponseV3(BaseModel):
+    """Complete LLM response schema for V3 digest — minimalist format."""
+    schema_version: Literal["v3"] = "v3"
+
+    title: str = Field(
+        description="Punchy one-line title. Captures the most important thing today. No em dashes. Not abstract. Not hype. Example: 'The model is not the bottleneck anymore.'"
+    )
+
+    meta: str = Field(
+        description="Date and video count. Format exactly: 'Month D · N videos'. Example: 'March 4 · 6 videos'"
+    )
+
+    intro: str = Field(
+        description=(
+            "Staccato short sentences, each on its own line (use actual newlines). "
+            "Not paragraphs. Distill what mattered today. "
+            "Name specific people, products, numbers. "
+            "No em dashes. No filler. No 'In this issue...' opener. "
+            "Example:\n"
+            "Three channels said it today.\n"
+            "None of them coordinated.\n"
+            "That's the signal.\n\n"
+            "Gemini Flash pricing dropped again.\n"
+            "Cursor hit $500M ARR.\n"
+            "Karpathy was right about pipelines."
+        )
+    )
+
+    pull_quote: Optional[str] = Field(
+        default=None,
+        description="One genuinely great verbatim quote from the day. Only populate when it truly stands out. Leave null otherwise. Do not force."
+    )
+
+    video_sections: List[VideoSectionV3]
+
+    references: ReferencesV3
+
+    keywords: List[str] = Field(description="6-10 keywords for search")
+    confidence_score: float = Field(ge=0.0, le=1.0)
 
 
 # === State Models for LangGraph Workflow ===

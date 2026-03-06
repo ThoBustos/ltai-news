@@ -143,7 +143,7 @@ class Settings(BaseSettings):
         alias="OPIK_WORKSPACE"
     )
 
-    # Video Analysis Configuration  
+    # Video Analysis Configuration
     analysis_model_name: str = Field(
         default="gemini-3-flash-preview",
         description="Model name for video analysis (valid options: gemini-3-flash-preview, gemini-3-pro-preview)",
@@ -153,6 +153,53 @@ class Settings(BaseSettings):
         default=300,
         description="Timeout for video analysis in seconds",
         alias="ANALYSIS_TIMEOUT_SECONDS"
+    )
+
+    # Email Service Configuration (Resend)
+    resend_api_key: Optional[str] = Field(
+        default=None,
+        description="Resend API key for sending digest emails",
+        alias="RESEND_API_KEY"
+    )
+    email_from: str = Field(
+        default="Daily AI <digest@yourdomain.com>",
+        description="From address for digest emails",
+        alias="EMAIL_FROM"
+    )
+
+    # X/Twitter API Configuration (OAuth 2.0 PKCE only)
+    twitter_oauth2_client_id: Optional[str] = Field(
+        default=None,
+        description="X/Twitter OAuth 2.0 Client ID",
+        alias="TWITTER_OAUTH2_CLIENT_ID"
+    )
+    twitter_oauth2_client_secret: Optional[str] = Field(
+        default=None,
+        description="X/Twitter OAuth 2.0 Client Secret",
+        alias="TWITTER_OAUTH2_CLIENT_SECRET"
+    )
+    twitter_oauth2_access_token: Optional[str] = Field(
+        default=None,
+        description="X/Twitter OAuth 2.0 Access Token (generated via PKCE)",
+        alias="TWITTER_OAUTH2_ACCESS_TOKEN"
+    )
+    twitter_oauth2_refresh_token: Optional[str] = Field(
+        default=None,
+        description="X/Twitter OAuth 2.0 Refresh Token (for auto-refresh)",
+        alias="TWITTER_OAUTH2_REFRESH_TOKEN"
+    )
+
+    auto_post_to_x: bool = Field(
+        default=False,
+        description="Automatically post digest to X as Phase 5 of daily pipeline",
+        alias="AUTO_POST_TO_X"
+    )
+
+    # Digest Schema Configuration
+    digest_schema_version: str = Field(
+        default="v3",
+        description="Schema version for digest generation: 'v3' (minimalist) or 'v2' (layered)",
+        alias="DIGEST_SCHEMA_VERSION"
     )
 
     model_config = SettingsConfigDict(

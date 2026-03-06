@@ -7,10 +7,8 @@ import opik
 class DailyDigestPrompts:
     """Centralized prompt management for digest generation."""
 
-    CURRENT_VERSION = "2.2"
-
     @staticmethod
-    def get_digest_generation_prompt() -> Any:  # Returns opik.ChatPrompt (not typed)
+    def get_digest_generation_prompt_v2() -> Any:  # Returns opik.ChatPrompt (not typed)
         """Get the master prompt for generating daily digests - V2.2.
 
         Returns:
@@ -240,12 +238,12 @@ Before outputting, verify:
         ]
 
         return opik.ChatPrompt(
-            name="daily-digest-generation",
+            name="daily-digest-generation-v2.2",
             messages=messages,
             metadata={
                 "category": "digest-generation",
                 "output_schema": "DigestContentResponse",
-                "version": DailyDigestPrompts.CURRENT_VERSION,
+                "version": "2.2",
                 "focus": "layered-scannable-actionable",
                 "changes": [
                     "V2.2: Fixed logical_flow - NO arrows in data (frontend renders them)",
@@ -269,6 +267,108 @@ Before outputting, verify:
                     "V2: Added table of contents",
                     "V2: Added estimated read time",
                     "V2: Expanded video sections with depth fields"
+                ]
+            }
+        )
+
+    @staticmethod
+    def get_digest_generation_prompt_v3() -> Any:  # Returns opik.ChatPrompt (not typed)
+        """Get the master prompt for generating daily digests - V3.0 minimalist format."""
+        messages: List[Dict[str, Any]] = [
+            {
+                "role": "system",
+                "content": """You are an expert curator creating a minimalist intelligence brief from AI/tech video content.
+
+YOUR GOAL: Distill what actually mattered today. Short, specific, no filler. Every sentence earns its place.
+
+## RULES
+
+### ZERO EM DASHES
+This is a hard rule. No em dashes (—) anywhere in the output. Not in title, not in intro, not in framing, not in bullets. Use a colon, comma, or new line instead.
+
+### ZERO EMOJIS
+Professional, clean, text-focused.
+
+### INTRO STYLE
+Staccato short sentences. Each on its own line. Not paragraphs. Name specific people, products, numbers.
+Bad: "Today's videos covered a range of important AI developments."
+Good:
+Three channels said it today.
+None of them coordinated.
+That's the signal.
+
+Gemini Flash pricing dropped again.
+Cursor hit $500M ARR.
+Karpathy was right about pipelines.
+
+### ENTITY LINKING
+Only use URLs that are explicitly present in the video context. Do not guess handles or domains. If a URL is available, include it in parentheses after the name: "Andrej Karpathy (x.com/karpathy)". If not available, plain text name only.
+
+## OUTPUT
+Respond with valid JSON matching the schema. No text before or after the JSON."""
+            },
+            {
+                "role": "user",
+                "content": """DATE: {{date}}
+TOTAL VIDEOS: {{video_count}}
+SOURCES: {{channel_list}}
+
+===== VIDEO ANALYSES =====
+{{videos_context}}
+===== END VIDEO ANALYSES =====
+
+Create a minimalist daily digest from these {{video_count}} video analyses.
+
+## REQUIRED FIELDS
+
+### title
+One punchy sentence. The most important thing today. No em dashes. Not abstract.
+
+### meta
+Format exactly: "Month D · N videos" — e.g. "March 4 · 6 videos"
+
+### intro
+Staccato short sentences, each on its own line (use \\n). Name specific people, products, numbers. No em dashes. No "In this issue..." opener.
+
+### pull_quote
+One verbatim quote from the day that genuinely stands out. Null if none qualifies. Do not force.
+
+### video_sections
+For EACH of the {{video_count}} videos:
+- video_id, title, channel_name, duration_minutes, video_url
+- speaker: primary speaker name (single string, e.g. "Andrej Karpathy")
+- framing: 1-2 sentences. What the video is about. Who is speaking. Why it matters today. No em dashes.
+- bullets: 4-8 points. Each is one complete thought with specific names, numbers, or claims. No em dashes.
+
+### references
+Three flat lists:
+- people: names mentioned, with URL in parens if available from context
+- tools: tools/products/frameworks mentioned, with URL in parens if available
+- papers: papers mentioned
+
+### keywords
+6-10 keywords for search.
+
+### confidence_score
+0.0-1.0"""
+            }
+        ]
+
+        return opik.ChatPrompt(
+            name="daily-digest-generation-v3.0",
+            messages=messages,
+            metadata={
+                "category": "digest-generation",
+                "output_schema": "DigestContentResponseV3",
+                "version": "3.0",
+                "focus": "minimalist-staccato",
+                "changes": [
+                    "V3: Minimalist format — title, meta, intro, pull_quote, video_sections, references",
+                    "V3: No em dashes enforced hard",
+                    "V3: Staccato intro (each sentence on own line)",
+                    "V3: Per-video: framing + bullets only (no deep_analysis, key_quotes, etc.)",
+                    "V3: References are flat string lists (people, tools, papers)",
+                    "V3: No stats, no action_items, no contrarian_corner, no convergence",
                 ]
             }
         )
@@ -318,7 +418,7 @@ Before outputting, verify:
         if core_topics:
             topics_str = "\n  ".join([
                 f"- {t.get('topic', '')} ({t.get('category', 'general')}, {t.get('importance', 'medium')})"
-                for t in core_topics
+                for t in core_topics if t
             ])
 
         # Format lessons
@@ -335,14 +435,14 @@ Before outputting, verify:
             sources_str = "\n  ".join([
                 f"- {s.get('title', '')} ({s.get('type', '')})"
                 + (f" by {s.get('author', '')}" if s.get('author') else "")
-                for s in sources
+                for s in sources if s
             ])
 
         concepts_str = ""
         if concepts:
             concepts_str = "\n  ".join([
                 f"- {c.get('concept', '')}: {c.get('description', '')}"
-                for c in concepts
+                for c in concepts if c
             ])
 
         # V2: Format people with social links
@@ -351,11 +451,13 @@ Before outputting, verify:
         if people:
             lines = []
             for p in people:
+                if not p:
+                    continue
                 name = p.get('name', 'Unknown')
                 role = p.get('role', '')
                 affiliation = p.get('affiliation', '')
                 context = p.get('context', '')
-                social = p.get('social_links', {})
+                social = p.get('social_links') or {}
 
                 line = f"- {name}"
                 if role:
@@ -403,6 +505,8 @@ Before outputting, verify:
         if communities:
             lines = []
             for c in communities:
+                if not c:
+                    continue
                 name = c.get('name', '')
                 ctype = c.get('type', '')
                 desc = c.get('description', '')
