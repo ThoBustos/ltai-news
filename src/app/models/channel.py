@@ -16,7 +16,8 @@ class Channel(BaseModel):
     name: str = Field(..., description="Channel display name")
 
     # Optional identifiers (for easier lookup)
-    handle: Optional[str] = Field(None, description="Channel handle (e.g., @LatentSpacePod)")
+    handle: Optional[str] = Field(None, description="YouTube channel handle (e.g., @LatentSpacePod)")
+    x_handle: Optional[str] = Field(None, description="X/Twitter handle (e.g., @LatentSpacePod)")
     custom_url: Optional[str] = Field(None, description="Custom URL if available")
 
     # Metadata (collected from YouTube API)

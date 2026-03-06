@@ -3,20 +3,28 @@
 This module centralizes:
 - Google GenAI client management
 - Token usage extraction and cost calculation
-- JSON response parsing with markdown fence handling
-- Structured output generation with automatic fallback
+- Structured output generation (pass Pydantic class to response_schema)
+
+NOTE: All agents now use TRUE structured output with `response_schema=PydanticClass`.
+The legacy `parse_llm_json` function is deprecated and kept only for backwards compatibility.
 """
 
 import re
+import warnings
 from dataclasses import dataclass
 from typing import TypeVar, Type, Optional, Tuple
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from google import genai
 from google.genai.types import GenerateContentConfig, GenerateContentResponse
 
 from app.config.settings import settings
 from app.core.logging import logger
+
+
+class GeminiStructuredOutputError(Exception):
+    """Raised when Gemini fails to produce valid structured output. Retriable."""
+    pass
 
 
 # === Pricing Configuration ===
@@ -103,7 +111,7 @@ def extract_token_usage(
     )
 
 
-# === JSON Response Parsing ===
+# === JSON Response Parsing (DEPRECATED) ===
 
 # Regex for markdown code fences (handles ```json, ```JSON, ``` variants)
 _FENCE_PATTERN = re.compile(
@@ -118,7 +126,11 @@ T = TypeVar('T', bound=BaseModel)
 
 
 class LLMParseError(ValueError):
-    """Raised when LLM response cannot be parsed to expected schema."""
+    """Raised when LLM response cannot be parsed to expected schema.
+    
+    DEPRECATED: With true structured output (response_schema=PydanticClass),
+    this error should never occur. Kept for backwards compatibility.
+    """
     
     def __init__(self, message: str, raw_response: str):
         super().__init__(message)
@@ -128,10 +140,16 @@ class LLMParseError(ValueError):
 def parse_llm_json(response_text: Optional[str], model: Type[T]) -> T:
     """Parse LLM response to Pydantic model, handling markdown fences.
     
-    Handles common LLM output patterns:
-    - ```json ... ``` (with newlines)
-    - ``` ... ``` (without language tag)
-    - Raw JSON with surrounding explanatory text
+    DEPRECATED: Use true structured output instead:
+    
+        config = GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=MyModel,  # Pass Pydantic CLASS directly
+        )
+        response = client.models.generate_content(..., config=config)
+        result = MyModel.model_validate_json(response.text or "")
+    
+    This function is kept only for backwards compatibility with legacy code.
     
     Args:
         response_text: Raw LLM output (may include markdown fences)
@@ -143,6 +161,12 @@ def parse_llm_json(response_text: Optional[str], model: Type[T]) -> T:
     Raises:
         LLMParseError: If JSON cannot be extracted or validated
     """
+    warnings.warn(
+        "parse_llm_json is deprecated. Use response_schema=PydanticClass for true structured output.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    
     text = (response_text or "").strip()
     
     if not text:
@@ -199,6 +223,7 @@ async def generate_structured(
     temperature: float = 0.2,
     model_name: Optional[str] = None,
     client: Optional[genai.Client] = None,
+    max_output_tokens: int = 8192,
 ) -> Tuple[T, TokenUsage]:
     """Generate structured output with automatic token tracking.
     
@@ -213,6 +238,7 @@ async def generate_structured(
         temperature: Sampling temperature (default 0.2 for structured output)
         model_name: Model to use (defaults to settings.analysis_model_name)
         client: GenAI client (creates one if not provided)
+        max_output_tokens: Maximum tokens for response (default 8192)
         
     Returns:
         Tuple of (validated response model, token usage)
@@ -227,7 +253,7 @@ async def generate_structured(
         model_name = settings.analysis_model_name
     
     response: Optional[GenerateContentResponse] = None
-    
+
     # Try native structured output first
     try:
         response = client.models.generate_content(
@@ -238,35 +264,48 @@ async def generate_structured(
                 response_mime_type="application/json",
                 response_schema=response_model,  # Pass Pydantic class directly
                 temperature=temperature,
+                maxOutputTokens=max_output_tokens,
             )
         )
-        result = response_model.model_validate_json(response.text or "")
-        logger.debug(f"Native structured output succeeded for {response_model.__name__}")
-        
-    except Exception as native_error:
-        # Fallback: inject schema into prompt and parse manually
+    except Exception as api_error:
+        # Gemini API rejected the schema (e.g. additionalProperties) — fall back to prompt
         logger.warning(
-            f"Native response_schema failed for {response_model.__name__} "
-            f"({type(native_error).__name__}: {native_error}), using prompt fallback"
+            f"Native response_schema rejected by Gemini for {response_model.__name__} "
+            f"({type(api_error).__name__}: {api_error}), using prompt fallback"
         )
-        
         import json
         schema_instruction = (
             f"\n\nRespond with valid JSON matching this exact schema:\n"
             f"{json.dumps(response_model.model_json_schema())}\n\n"
             f"Your response must be valid JSON only, no additional text."
         )
-        
         response = client.models.generate_content(
             model=model_name,
             contents=contents + schema_instruction,
             config=GenerateContentConfig(
                 system_instruction=system_instruction,
                 temperature=temperature,
+                maxOutputTokens=max_output_tokens,
             )
         )
-        result = parse_llm_json(response.text, response_model)
-    
+        try:
+            result = parse_llm_json(response.text, response_model)
+        except Exception as parse_error:
+            raise GeminiStructuredOutputError(
+                f"Prompt fallback also failed for {response_model.__name__}: {parse_error}"
+            ) from parse_error
+        usage = extract_token_usage(response)
+        return result, usage
+
+    # Native call succeeded — parse the response
+    try:
+        result = response_model.model_validate_json(response.text or "")
+        logger.debug(f"Native structured output succeeded for {response_model.__name__}")
+    except ValidationError as e:
+        raise GeminiStructuredOutputError(
+            f"Schema validation failed for {response_model.__name__}: {e}"
+        ) from e
+
     usage = extract_token_usage(response)
     return result, usage
 

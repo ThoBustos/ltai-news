@@ -1,17 +1,13 @@
 """Workflow nodes for weekly digest generation."""
 
 import time
-import json
 from datetime import date
 
 import opik
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import SystemMessage, HumanMessage
-
 from app.core.logging import logger
 from app.config.settings import settings
 from app.core.utils.time_window import parse_date
-from app.core.utils.llm_client import calculate_cost, GEMINI_FLASH_PRICING
+from app.core.utils.llm_client import get_genai_client, generate_structured
 from app.models.weekly_digest import WeeklyContentResponse
 from app.repositories.daily_digest_repository import DailyDigestRepository
 from app.repositories.weekly_digest_repository import WeeklyDigestRepository
@@ -149,53 +145,34 @@ async def generate_weekly_node(state: WeeklyDigestState) -> WeeklyDigestState:
             }
         )
 
-        # Convert Opik messages to LangChain messages
-        langchain_messages = []
+        # Build prompt content for Google GenAI
+        system_content = ""
+        user_content = ""
         for msg in formatted_messages:
+            if msg is None:
+                continue
             content = str(msg.get("content", ""))
             if msg.get("role") == "system":
-                langchain_messages.append(SystemMessage(content=content))
+                system_content = content
             else:
-                langchain_messages.append(HumanMessage(content=content))
+                user_content = content
 
-        # Initialize LangChain ChatGoogleGenerativeAI
+        # Get GenAI client
+        client = get_genai_client()
         model_name = settings.analysis_model_name
-        llm = ChatGoogleGenerativeAI(
-            model=model_name,
-            temperature=0.3,  # Low for structured output consistency
-            api_key=settings.google_api_key,
-        )
 
-        # Create structured output version using native JSON schema method
-        # This guarantees valid JSON matching the schema - no parsing needed!
-        structured_llm = llm.with_structured_output(
-            schema=WeeklyContentResponse.model_json_schema(),
-            method="json_schema"
-        )
-
-        # Make LLM call - returns dict directly (validated against schema)
+        # Use hybrid approach - tries structured output, falls back to parsing on truncation
         start_time = time.time()
-        structured_response_dict = await structured_llm.ainvoke(langchain_messages)
+        weekly_content, usage = await generate_structured(
+            contents=user_content,
+            response_model=WeeklyContentResponse,
+            system_instruction=system_content,
+            temperature=0.3,
+            model_name=model_name,
+            client=client,
+            max_output_tokens=12000,  # Large response model needs more tokens
+        )
         processing_time = time.time() - start_time
-
-        # Convert dict to Pydantic model
-        if not isinstance(structured_response_dict, dict):
-            structured_response_dict = dict(structured_response_dict) if hasattr(structured_response_dict, '__dict__') else {}
-
-        weekly_content = WeeklyContentResponse(**structured_response_dict)
-
-        # Estimate token usage (structured_llm doesn't expose usage_metadata)
-        # Using ~4 chars per token approximation
-        input_text = "\n".join([
-            msg.content if hasattr(msg, 'content') and isinstance(msg.content, str)
-            else str(msg.content) if hasattr(msg, 'content')
-            else str(msg)
-            for msg in langchain_messages
-        ])
-        output_text = json.dumps(structured_response_dict)
-        input_tokens = max(1, len(input_text) // 4)
-        output_tokens = max(1, len(output_text) // 4)
-        cost = calculate_cost(input_tokens, output_tokens, GEMINI_FLASH_PRICING)
 
         # Ensure stats are populated
         if not weekly_content.stats.days_covered:
@@ -221,9 +198,9 @@ async def generate_weekly_node(state: WeeklyDigestState) -> WeeklyDigestState:
             # themes
             for theme in weekly_content.themes:
                 word_count += len(theme.one_liner.split())
-            # videos by category
-            for videos in weekly_content.videos_by_category.values():
-                for video in videos:
+            # videos by category (now a list of VideoCategory)
+            for category in weekly_content.video_categories:
+                for video in category.videos:
                     word_count += len(video.one_liner.split())
             # weekly_note
             word_count += len(weekly_content.weekly_note.split())
@@ -233,13 +210,13 @@ async def generate_weekly_node(state: WeeklyDigestState) -> WeeklyDigestState:
         formatted_markdown = format_weekly_markdown(weekly_content, week_start, week_end)
         formatted_html = format_weekly_html(weekly_content, week_start, week_end)
 
-        # Create metrics dict
+        # Create metrics dict with real token counts
         metrics = {
-            "workflow_version": "2.1",  # Updated for structured output
+            "workflow_version": "2.2",  # Updated for Google GenAI SDK with real tokens
             "prompt_version": WeeklyDigestPrompts.CURRENT_VERSION,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "total_cost": cost,
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
+            "total_cost": usage.cost_usd,
             "processing_time_seconds": processing_time,
         }
 
@@ -259,9 +236,9 @@ async def generate_weekly_node(state: WeeklyDigestState) -> WeeklyDigestState:
                         "confidence_score": weekly_content.confidence_score,
                         "days_with_content": days_with_content,
                         "total_videos": total_videos,
-                        "tokens_input": input_tokens,
-                        "tokens_output": output_tokens,
-                        "cost_usd": cost,
+                        "tokens_input": usage.input_tokens,
+                        "tokens_output": usage.output_tokens,
+                        "cost_usd": usage.cost_usd,
                         "structured_output": True,
                     }
                 )
@@ -269,8 +246,8 @@ async def generate_weekly_node(state: WeeklyDigestState) -> WeeklyDigestState:
             pass
 
         logger.info(
-            f"Weekly digest generation completed: {input_tokens + output_tokens} tokens, "
-            f"${cost:.6f}, {processing_time:.2f}s (structured output)"
+            f"Weekly digest generation completed: {usage.total_tokens} tokens, "
+            f"${usage.cost_usd:.6f}, {processing_time:.2f}s (structured output)"
         )
 
         return state

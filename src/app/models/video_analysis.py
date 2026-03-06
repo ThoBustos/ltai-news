@@ -4,6 +4,51 @@ from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Dict, Optional, Any, Literal
 from datetime import datetime
 
+# Import shared SocialLinks model to avoid duplication
+from app.models.daily_digest import SocialLinks
+
+
+# === Gemini-compatible sub-models (no Dict types) ===
+
+class LessonsLearned(BaseModel):
+    """Lessons learned organized by category — no Dict types for Gemini compatibility."""
+    technical: List[str] = Field(default_factory=list, description="Technical implementation insights, architecture decisions, tooling choices")
+    business: List[str] = Field(default_factory=list, description="Business strategy, operations, market dynamics")
+    general: List[str] = Field(default_factory=list, description="Career advice, mindset shifts, industry trends")
+
+    def get(self, key: str, default=None):
+        """Dict-like access for backwards compatibility."""
+        return getattr(self, key, default)
+
+    def to_dict(self) -> Dict[str, List[str]]:
+        return self.model_dump()
+
+
+class ConfidenceScores(BaseModel):
+    """Confidence scores per extraction category — no Dict types for Gemini compatibility."""
+    tldr: float = Field(default=0.0, ge=0.0, le=1.0)
+    teaser_hooks: float = Field(default=0.0, ge=0.0, le=1.0)
+    keywords: float = Field(default=0.0, ge=0.0, le=1.0)
+    core_topics: float = Field(default=0.0, ge=0.0, le=1.0)
+    lessons_learned: float = Field(default=0.0, ge=0.0, le=1.0)
+    direct_quotes: float = Field(default=0.0, ge=0.0, le=1.0)
+    analogies_metaphors: float = Field(default=0.0, ge=0.0, le=1.0)
+    frameworks_shared: float = Field(default=0.0, ge=0.0, le=1.0)
+    statistics_data: float = Field(default=0.0, ge=0.0, le=1.0)
+    section_analysis: float = Field(default=0.0, ge=0.0, le=1.0)
+    sources_referenced: float = Field(default=0.0, ge=0.0, le=1.0)
+    people_mentioned: float = Field(default=0.0, ge=0.0, le=1.0)
+    communities_mentioned: float = Field(default=0.0, ge=0.0, le=1.0)
+    concepts_mentioned: float = Field(default=0.0, ge=0.0, le=1.0)
+    detailed_insights: float = Field(default=0.0, ge=0.0, le=1.0)
+
+    def values(self):
+        """Dict-like .values() for backwards compatibility."""
+        return self.model_dump().values()
+
+    def to_dict(self) -> Dict[str, float]:
+        return self.model_dump()
+
 # === LLM Response Model (for structured output) ===
 
 class CoreTopic(BaseModel):
@@ -14,7 +59,7 @@ class CoreTopic(BaseModel):
 
 class SourceReference(BaseModel):
     """Individual source reference."""
-    type: Literal["paper", "book", "podcast", "link", "discord", "community", "event", "course"] = Field(description="Source type")
+    type: Literal["paper", "book", "podcast", "link", "discord", "community", "event", "course", "organization"] = Field(description="Source type")
     title: str = Field(description="Source title or name")
     url: Optional[str] = Field(None, description="URL if available")
     author: Optional[str] = Field(None, description="Author or creator")
@@ -25,18 +70,17 @@ class ConceptMention(BaseModel):
     description: str = Field(description="Brief description of the concept")
     relevance: str = Field(description="Why this concept is relevant to the video")
 
+
 class PersonMention(BaseModel):
     """Person mentioned in the video."""
     name: str = Field(description="Person's name")
     role: Optional[str] = Field(None, description="Their role or title")
     affiliation: Optional[str] = Field(None, description="Organization or company")
     context: Optional[str] = Field(None, description="Why they're mentioned in this video")
-    # V2: Social links - ONLY include if explicitly mentioned in video/description
-    social_links: Dict[str, str] = Field(
-        default_factory=dict,
-        description="Social links ONLY if explicitly mentioned: "
-        "{'twitter': '@handle', 'linkedin': 'url', 'website': 'url'}. "
-        "Do NOT guess handles or URLs."
+    # Explicit model for Gemini native structured output compatibility (no Dict types)
+    social_links: Optional[SocialLinks] = Field(
+        default=None,
+        description="Social links ONLY if explicitly mentioned. Do NOT guess handles or URLs."
     )
 
 class CommunityMention(BaseModel):
@@ -99,7 +143,11 @@ class VideoSection(BaseModel):
 
 
 class VideoAnalysisResponse(BaseModel):
-    """Master structured response for comprehensive video analysis - V2.0."""
+    """Master structured response for comprehensive video analysis - V2.1 (Gemini structured output compatible).
+
+    DEPRECATED: Use VideoAnalysisCoreV3 + VideoAnalysisDepthV3 for new code.
+    Kept for backwards compatibility with existing stored data.
+    """
 
     # === CORE SUMMARY ===
     tldr: str = Field(description="2-3 paragraph dense summary with key numbers, frameworks, and insights")
@@ -109,8 +157,9 @@ class VideoAnalysisResponse(BaseModel):
 
     # === STRUCTURED EXTRACTIONS ===
     core_topics: List[CoreTopic] = Field(description="3-7 main topics identified")
-    lessons_learned: Dict[str, List[str]] = Field(
-        description="Lessons by category (technical/business/general)"
+    lessons_learned: LessonsLearned = Field(
+        default_factory=LessonsLearned,
+        description="Lessons by category: technical, business, general"
     )
     sources_referenced: List[SourceReference] = Field(description="External sources mentioned")
     concepts_mentioned: List[ConceptMention] = Field(description="Key concepts and frameworks")
@@ -119,30 +168,70 @@ class VideoAnalysisResponse(BaseModel):
 
     # === V2: DEPTH EXTRACTIONS ===
     direct_quotes: List[DirectQuote] = Field(
+        default_factory=list,
         description="5-10 most impactful quotes - verbatim aha moments"
     )
     analogies_metaphors: List[AnalogyMetaphor] = Field(
+        default_factory=list,
         description="Analogies and metaphors used to explain concepts"
     )
     frameworks_shared: List[FrameworkMentioned] = Field(
+        default_factory=list,
         description="Mental models and frameworks explained"
     )
     statistics_data: List[StatisticDataPoint] = Field(
+        default_factory=list,
         description="Numbers, stats, and quantified claims"
     )
 
     # === SECTION-BY-SECTION ANALYSIS ===
     section_analysis: List[VideoSection] = Field(
+        default_factory=list,
         description="Deep analysis of each major section/segment"
     )
 
     # === SYNTHESIS ===
-    detailed_insights: str = Field(description="Extended analysis connecting all elements")
+    detailed_insights: str = Field(default="", description="Extended analysis connecting all elements")
 
-    # === CONFIDENCE ===
-    confidence_scores: Dict[str, float] = Field(
+    # === CONFIDENCE — explicit model instead of Dict to avoid additionalProperties ===
+    confidence_scores: ConfidenceScores = Field(
+        default_factory=ConfidenceScores,
         description="Confidence per extraction category (0.0-1.0)"
     )
+
+# === V3 Schemas (split for reliability — smaller schemas = fewer Gemini failures) ===
+
+class VideoAnalysisCoreV3(BaseModel):
+    """Core extraction schema — facts, clean, structured. Schema V3."""
+    schema_version: Literal["v3"] = "v3"
+    video_id: str
+    title: str
+    channel_name: str
+
+    # Anchor fields first (model commits here before generating lists)
+    summary: str = Field(description="2-3 sentence dense summary. No em dashes.")
+    content_type: Literal["tutorial", "news", "interview", "commentary", "debate", "other"]
+
+    # Constrained lists
+    key_points: List[str] = Field(description="3-6 key insights. Each is one complete thought with specific names/numbers.")
+    tags: List[str] = Field(description="3-5 topic tags")
+
+    # Entities — simple, no nested dicts
+    people_mentioned: List[str] = Field(default_factory=list, description="Names of people mentioned")
+    tools_mentioned: List[str] = Field(default_factory=list, description="Tools, products, frameworks mentioned")
+
+    confidence_score: float = Field(ge=0.0, le=1.0)
+
+
+class VideoAnalysisDepthV3(BaseModel):
+    """Depth extraction schema — optional, run as second call if needed. Schema V3."""
+    schema_version: Literal["v3"] = "v3"
+    video_id: str
+
+    key_quotes: List[str] = Field(default_factory=list, description="2-3 verbatim quotes")
+    key_statistics: List[str] = Field(default_factory=list, description="Important numbers mentioned")
+    tldr: str = Field(description="One sentence. What happened in this video.")
+
 
 # === Database Storage Model ===
 

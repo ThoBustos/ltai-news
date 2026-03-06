@@ -16,14 +16,52 @@ from app.agents.video_analyzer.nodes import (
 )
 
 
+async def create_checkpointer(database_url: str):
+    """Create a PostgreSQL-backed checkpointer for production workflow resilience.
+
+    If analysis fails halfway through multiple videos, the workflow can resume
+    from the last checkpoint instead of starting from scratch.
+
+    Args:
+        database_url: PostgreSQL connection string (e.g. from settings.database_url)
+
+    Returns:
+        Configured AsyncPostgresSaver ready to use with workflow.compile(checkpointer=...)
+
+    Usage:
+        checkpointer = await create_checkpointer(settings.database_url)
+        compiled = workflow.compile(checkpointer=checkpointer)
+        # Must pass thread_id in config when invoking:
+        await compiled.ainvoke(state, config={"configurable": {"thread_id": video_id}})
+    """
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+    from psycopg_pool import AsyncConnectionPool
+    from psycopg.rows import dict_row
+
+    pool = AsyncConnectionPool(
+        conninfo=database_url,
+        max_size=10,
+        kwargs={"autocommit": True, "row_factory": dict_row},
+    )
+    checkpointer = AsyncPostgresSaver(pool)
+    await checkpointer.setup()
+    return checkpointer
+
+
 def create_video_analysis_workflow():
     """Create video analysis workflow with Opik tracking."""
+    from langgraph.types import RetryPolicy
+    from app.core.utils.llm_client import GeminiStructuredOutputError
 
     workflow = StateGraph(VideoAnalysisState)
 
-    # Add nodes
+    # Add nodes — master_extraction retries on GeminiStructuredOutputError
     workflow.add_node("load_context", load_context_node)
-    workflow.add_node("master_extraction", master_extraction_node)
+    workflow.add_node(
+        "master_extraction",
+        master_extraction_node,
+        retry=RetryPolicy(max_attempts=3, retry_on=(GeminiStructuredOutputError,)),
+    )
     workflow.add_node("save_results", save_results_node)
 
     # Define sequential edges
@@ -85,7 +123,7 @@ async def analyze_video(video_id: str) -> Optional[VideoAnalysisComplete]:
             teaser_hooks=response.teaser_hooks,
             keywords=response.keywords,
             core_topics=[topic.model_dump() for topic in response.core_topics],
-            lessons_learned=response.lessons_learned,
+            lessons_learned=response.lessons_learned.to_dict(),
             detailed_insights=response.detailed_insights,
             sources_referenced=[source.model_dump() for source in response.sources_referenced],
             concepts_mentioned=[concept.model_dump() for concept in response.concepts_mentioned],
@@ -102,7 +140,7 @@ async def analyze_video(video_id: str) -> Optional[VideoAnalysisComplete]:
             total_tokens=metrics.input_tokens + metrics.output_tokens,
             total_cost=metrics.total_cost,
             total_processing_time_seconds=metrics.processing_time_seconds,
-            confidence_scores=response.confidence_scores,
+            confidence_scores=response.confidence_scores.to_dict(),
             model_name=settings.analysis_model_name
         )
 

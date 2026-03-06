@@ -111,13 +111,13 @@ def format_weekly_markdown(content: WeeklyContentResponse, week_start: date, wee
     lines.append("---")
     lines.append("")
 
-    # VIDEOS BY CATEGORY
+    # VIDEOS BY CATEGORY (now using VideoCategory model)
     lines.append("## ALL VIDEOS BY CATEGORY")
     lines.append("")
-    for category, videos in content.videos_by_category.items():
-        lines.append(f"### {category} ({len(videos)})")
+    for cat in content.video_categories:
+        lines.append(f"### {cat.category_name} ({len(cat.videos)})")
         lines.append("")
-        for v in videos:
+        for v in cat.videos:
             video_url = f"https://youtube.com/watch?v={v.video_id}"
             lines.append(f"- **[{v.title}]({video_url})** -- {v.channel} | {v.day} | {v.duration_minutes}m")
             lines.append(f"  {v.one_liner}")
@@ -173,11 +173,11 @@ def format_weekly_html(content: WeeklyContentResponse, week_start: date, week_en
         </div>
         """
 
-    # Videos by category
+    # Videos by category (now using VideoCategory model)
     categories_html = ""
-    for category, videos in content.videos_by_category.items():
+    for cat in content.video_categories:
         videos_list = ""
-        for v in videos:
+        for v in cat.videos:
             video_url = f"https://youtube.com/watch?v={v.video_id}"
             videos_list += f"""
             <div class="video-item">
@@ -188,7 +188,7 @@ def format_weekly_html(content: WeeklyContentResponse, week_start: date, week_en
             """
         categories_html += f"""
         <div class="category">
-            <h3>{category} <span class="count">({len(videos)})</span></h3>
+            <h3>{cat.category_name} <span class="count">({len(cat.videos)})</span></h3>
             {videos_list}
         </div>
         """

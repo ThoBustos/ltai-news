@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import channels, orchestrator
+from app.api import channels, orchestrator, x_thread
 from app.core.logging import setup_logging
 
 # Initialize logging
@@ -25,6 +25,7 @@ app.add_middleware(
 # Include routers
 app.include_router(channels.router)
 app.include_router(orchestrator.router)
+app.include_router(x_thread.router)
 
 
 @app.get("/")

@@ -11,6 +11,7 @@ from app.models.pipeline import (
     PipelineStatus,
     ProcessingResult,
     DigestResult,
+    XThreadResult,
     TranscriptExtractionResult,
 )
 from app.models.video import Video, VideoProcessingStatus
@@ -18,6 +19,8 @@ from app.repositories import VideoRepository, ChannelRepository
 from app.services.channel_tracker import ChannelTracker
 from app.services.transcript_service import TranscriptService
 from app.services.video_analysis_service import VideoAnalysisService
+from app.services.x_thread_service import XThreadService
+from app.config.settings import settings
 
 
 class ContentOrchestrator:
@@ -30,6 +33,7 @@ class ContentOrchestrator:
         self.channel_tracker = ChannelTracker()
         self.transcript_service = TranscriptService()
         self.video_analysis_service = VideoAnalysisService()
+        self.x_thread_service = XThreadService()
     
     async def run_daily_pipeline(self, target_date: date) -> PipelineResult:
         """Run the complete daily content pipeline for a specific date.
@@ -63,21 +67,32 @@ class ContentOrchestrator:
             # Phase 4: Generate digest
             logger.info(f"Phase 4: Generating digest for {date_str}")
             digest_result = await self._generate_digest(target_date)
-            
+
+            # Phase 5: Post to X (if enabled)
+            x_thread_result = None
+            if settings.auto_post_to_x and digest_result.digest_generated:
+                logger.info(f"Phase 5: Posting to X for {date_str}")
+                x_thread_result = await self._post_to_x(target_date)
+            elif settings.auto_post_to_x and not digest_result.digest_generated:
+                logger.warning(f"Skipping Phase 5 (X posting): No digest generated for {date_str}")
+
             # Collect all errors
             total_errors.extend(extraction_result.errors)
             total_errors.extend(transcript_result.errors)
             total_errors.extend(processing_result.errors)
             total_errors.extend(digest_result.errors)
-            
+            if x_thread_result:
+                total_errors.extend(x_thread_result.errors)
+
             pipeline_completed_at = datetime.now(timezone.utc)
-            
+
             result = PipelineResult(
                 target_date=date_str,
                 window=window,
                 extraction=extraction_result,
                 processing=processing_result,
                 digest=digest_result,
+                x_thread=x_thread_result,
                 pipeline_started_at=pipeline_started_at,
                 pipeline_completed_at=pipeline_completed_at,
                 total_errors=total_errors,
@@ -334,7 +349,40 @@ class ContentOrchestrator:
                 started_at=started_at,
                 completed_at=datetime.now(timezone.utc),
             )
-    
+
+    async def _post_to_x(self, target_date: date) -> XThreadResult:
+        """Post digest to X/Twitter for the target date.
+
+        Args:
+            target_date: Date of the digest to post
+
+        Returns:
+            XThreadResult with posting statistics
+        """
+        started_at = datetime.now(timezone.utc)
+        errors = []
+
+        logger.info(f"Posting digest to X for {target_date}")
+
+        try:
+            # Use X thread service to generate and post thread
+            result = await self.x_thread_service.post_digest_to_x(target_date)
+            return result
+
+        except Exception as e:
+            logger.error(f"X posting failed: {e}", exc_info=True)
+            errors.append(f"X posting failed: {str(e)}")
+
+            return XThreadResult(
+                thread_posted=False,
+                tweet_count=0,
+                tweet_ids=None,
+                thread_url=None,
+                errors=errors,
+                started_at=started_at,
+                completed_at=datetime.now(timezone.utc),
+            )
+
     def get_processing_queue(self, target_date: date) -> List[Video]:
         """Get videos that need processing for the target date.
         

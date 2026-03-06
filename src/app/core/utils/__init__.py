@@ -13,11 +13,11 @@ from app.core.utils.llm_client import (
     # Token usage
     TokenUsage,
     extract_token_usage,
-    # JSON parsing
+    # Structured generation (use response_schema=PydanticClass)
+    generate_structured,
+    # DEPRECATED: Legacy JSON parsing (use true structured output instead)
     LLMParseError,
     parse_llm_json,
-    # Structured generation
-    generate_structured,
 )
 
 __all__ = [
@@ -34,7 +34,8 @@ __all__ = [
     "calculate_cost",
     "TokenUsage",
     "extract_token_usage",
+    "generate_structured",
+    # DEPRECATED (kept for backwards compatibility)
     "LLMParseError",
     "parse_llm_json",
-    "generate_structured",
 ]

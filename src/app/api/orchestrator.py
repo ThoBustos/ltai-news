@@ -605,6 +605,28 @@ async def generate_digest(date_str: str) -> DigestGenerationResponse:
         # Parse date
         target_date = parse_date(date_str)
 
+        # Idempotency guard: skip if a digest already exists and has content for today.
+        # Prevents duplicate digests when Vercel retries the cron job.
+        from app.repositories.daily_digest_repository import DailyDigestRepository
+        from app.models.daily_digest import DigestGenerationResult as _DGR
+        _digest_repo = DailyDigestRepository()
+        _existing = await _digest_repo.get_digest_by_date(target_date)
+        if _existing and (_existing.content_json is not None or _existing.is_sent):
+            logger.info(f"Digest already exists for {date_str}, skipping (idempotency guard)")
+            return DigestGenerationResponse(
+                message=f"Digest already exists for {date_str}",
+                target_date=date_str,
+                status="completed",
+                result=_DGR(
+                    success=True,
+                    digest_id=str(_existing.id) if _existing.id else None,
+                    publish_date=date_str,
+                    title=_existing.title,
+                    videos_included=_existing.video_count or 0,
+                    is_empty=_existing.content_json is None,
+                ),
+            )
+
         # Import here to avoid circular imports
         from app.agents.daily_digest import generate_daily_digest
 

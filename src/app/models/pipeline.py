@@ -55,14 +55,32 @@ class ProcessingResult(BaseModel):
 
 class DigestResult(BaseModel):
     """Result of digest generation phase."""
-    
+
     digest_generated: bool
     videos_included: int
     digest_id: Optional[str]
     errors: List[str]
     started_at: datetime
     completed_at: datetime
-    
+
+    @computed_field
+    @property
+    def duration_seconds(self) -> float:
+        """Get duration in seconds."""
+        return (self.completed_at - self.started_at).total_seconds()
+
+
+class XThreadResult(BaseModel):
+    """Result of X thread posting phase."""
+
+    thread_posted: bool
+    tweet_count: int
+    tweet_ids: Optional[List[str]]
+    thread_url: Optional[str]
+    errors: List[str]
+    started_at: datetime
+    completed_at: datetime
+
     @computed_field
     @property
     def duration_seconds(self) -> float:
@@ -72,12 +90,13 @@ class DigestResult(BaseModel):
 
 class PipelineResult(BaseModel):
     """Complete pipeline execution result."""
-    
+
     target_date: str  # YYYY-MM-DD format
     window: TimeWindow
     extraction: Optional[ExtractionResult]
     processing: Optional[ProcessingResult]
     digest: Optional[DigestResult]
+    x_thread: Optional["XThreadResult"] = None
     pipeline_started_at: datetime
     pipeline_completed_at: datetime
     total_errors: List[str]

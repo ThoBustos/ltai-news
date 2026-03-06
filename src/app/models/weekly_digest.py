@@ -9,7 +9,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, ConfigDict
 
-from app.models.daily_digest import Speaker, ReferenceItem
+from app.models.daily_digest import Speaker, ReferenceItem, SocialLinks
 
 
 # === LLM Response Schema Models (V2) ===
@@ -84,6 +84,12 @@ class CategoryVideo(BaseModel):
     one_liner: str = Field(description="Single sentence key takeaway")
 
 
+class VideoCategory(BaseModel):
+    """A single category with its videos - for Gemini structured output compatibility."""
+    category_name: str = Field(description="Category name (e.g., 'AI Agents', 'MLOps', 'Research')")
+    videos: List[CategoryVideo] = Field(default_factory=list, description="Videos in this category")
+
+
 class WeeklyReference(BaseModel):
     """Reference aggregated across the week with mention count."""
     name: str
@@ -92,9 +98,10 @@ class WeeklyReference(BaseModel):
     author: Optional[str] = None
     url: Optional[str] = None
     description: Optional[str] = None
-    social_links: Dict[str, str] = Field(
-        default_factory=dict,
-        description="Social links for people: {'twitter': 'url', 'linkedin': 'url'}"
+    # Explicit model for Gemini native structured output compatibility (no Dict types)
+    social_links: Optional[SocialLinks] = Field(
+        default=None,
+        description="Social links for people. Only populate if explicitly mentioned."
     )
 
 
@@ -153,7 +160,7 @@ class WeeklyContentResponse(BaseModel):
         description="2-4 themes that appeared across multiple videos"
     )
 
-    videos_by_category: Dict[str, List[CategoryVideo]] = Field(
+    video_categories: List[VideoCategory] = Field(
         description="All videos grouped into 3-5 LLM-determined categories"
     )
 

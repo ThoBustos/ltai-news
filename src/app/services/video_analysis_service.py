@@ -7,7 +7,7 @@ from app.core.logging import logger
 from app.models.video_analysis import VideoAnalysisComplete
 from app.repositories.video_analysis_repository import VideoAnalysisRepository
 from app.repositories.video_repository import VideoRepository
-from app.agents.video_analyzer import analyze_video
+from app.agents.video_analyzer.workflow import analyze_video
 
 
 class VideoAnalysisService:

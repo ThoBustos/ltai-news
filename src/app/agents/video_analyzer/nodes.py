@@ -1,19 +1,13 @@
 """Workflow nodes for video analysis."""
 
 import time
-import json
 from datetime import datetime, timezone
 
 import opik
-from google.genai.types import GenerateContentConfig
 
 from app.core.logging import logger
 from app.config.settings import settings
-from app.core.utils.llm_client import (
-    get_genai_client,
-    extract_token_usage,
-    parse_llm_json,
-)
+from app.core.utils.llm_client import get_genai_client, extract_token_usage, generate_structured
 from app.models.video_analysis import VideoAnalysisResponse, VideoAnalysisComplete, ProcessingMetrics
 from app.repositories.video_repository import VideoRepository
 from app.repositories.channel_repository import ChannelRepository
@@ -94,47 +88,44 @@ async def master_extraction_node(state: VideoAnalysisState) -> VideoAnalysisStat
         system_content = ""
         user_content = ""
         for msg in formatted_messages:
+            if msg is None:
+                continue
             content = str(msg.get("content", ""))
             if msg.get("role") == "system":
                 system_content = content
             else:
                 user_content = content
 
-        # Add JSON schema instruction to user content
-        schema_instruction = f"""
-
-Respond with valid JSON matching this exact schema:
-{json.dumps(VideoAnalysisResponse.model_json_schema(), indent=2)}
-
-Your response must be valid JSON only, no additional text."""
-        
-        user_content += schema_instruction
-
-        # Get GenAI client
+        # Get GenAI client and model name
         client = get_genai_client()
         model_name = settings.analysis_model_name
 
-        # Make LLM call using Google GenAI SDK
+        # Use hybrid approach - tries structured, falls back to parsing
         start_time = time.time()
-        response = client.models.generate_content(
-            model=model_name,
+        parsed_response, usage = await generate_structured(
             contents=user_content,
-            config=GenerateContentConfig(
-                systemInstruction=system_content,
-                temperature=1.0,
-            )
+            response_model=VideoAnalysisResponse,
+            system_instruction=system_content,
+            temperature=1.0,
+            model_name=model_name,
+            client=client,
+            max_output_tokens=8192,
         )
         processing_time = time.time() - start_time
 
-        # Extract token usage and cost using shared utility
-        usage = extract_token_usage(response)
+        # Confidence scores — convert to dict for ProcessingMetrics
+        confidence_scores = parsed_response.confidence_scores.to_dict()
 
-        # Parse JSON response using shared utility (handles markdown fences)
-        parsed_response = parse_llm_json(response.text, VideoAnalysisResponse)
+        # Check if lessons exist
+        has_lessons = bool(
+            parsed_response.lessons_learned.get('technical') or
+            parsed_response.lessons_learned.get('business') or
+            parsed_response.lessons_learned.get('general')
+        )
 
         # Create processing metrics with calculated cost
         metrics = ProcessingMetrics(
-            workflow_version="2.0",
+            workflow_version="2.1",  # V2.1 with Gemini structured output
             extraction_method="single-master-prompt",
             started_at=datetime.now(timezone.utc),
             completed_at=datetime.now(timezone.utc),
@@ -142,13 +133,13 @@ Your response must be valid JSON only, no additional text."""
             output_tokens=usage.output_tokens,
             total_cost=usage.cost_usd,
             processing_time_seconds=processing_time,
-            confidence_scores=parsed_response.confidence_scores,
+            confidence_scores=confidence_scores,
             extraction_completeness={
                 "tldr": bool(parsed_response.tldr),
                 "teaser_hooks": bool(parsed_response.teaser_hooks),
                 "keywords": bool(parsed_response.keywords),
                 "core_topics": bool(parsed_response.core_topics),
-                "lessons_learned": bool(parsed_response.lessons_learned),
+                "lessons_learned": has_lessons,
                 "sources_referenced": bool(parsed_response.sources_referenced),
                 "concepts_mentioned": bool(parsed_response.concepts_mentioned),
                 "people_mentioned": bool(parsed_response.people_mentioned),
@@ -169,10 +160,12 @@ Your response must be valid JSON only, no additional text."""
         try:
             current_span = opik.get_current_span()
             if current_span:
+                confidence_values = list(confidence_scores.values())
+                confidence_avg = sum(confidence_values) / len(confidence_values) if confidence_values else 0.0
                 current_span.update(
                     metadata={
                         "prompt_name": "video-master-extraction",
-                        "confidence_avg": sum(parsed_response.confidence_scores.values()) / len(parsed_response.confidence_scores),
+                        "confidence_avg": confidence_avg,
                         "tokens_input": usage.input_tokens,
                         "tokens_output": usage.output_tokens,
                         "total_tokens": usage.total_tokens,
@@ -220,7 +213,7 @@ async def save_results_node(state: VideoAnalysisState) -> VideoAnalysisState:
             teaser_hooks=response.teaser_hooks,
             keywords=response.keywords,
             core_topics=[topic.model_dump() for topic in response.core_topics],
-            lessons_learned=response.lessons_learned,
+            lessons_learned=response.lessons_learned.to_dict(),
             detailed_insights=response.detailed_insights,
             sources_referenced=[source.model_dump() for source in response.sources_referenced],
             concepts_mentioned=[concept.model_dump() for concept in response.concepts_mentioned],
@@ -241,7 +234,7 @@ async def save_results_node(state: VideoAnalysisState) -> VideoAnalysisState:
             total_tokens=metrics.input_tokens + metrics.output_tokens,
             total_cost=metrics.total_cost,
             total_processing_time_seconds=metrics.processing_time_seconds,
-            confidence_scores=response.confidence_scores,
+            confidence_scores=response.confidence_scores.to_dict(),
             processing_metadata={
                 "extraction_method": metrics.extraction_method,
                 "workflow_version": metrics.workflow_version,

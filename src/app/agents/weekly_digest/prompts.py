@@ -162,7 +162,7 @@ For backend/search only (not displayed in newsletter):
 - [ ] contrarian_take challenges conventional wisdom
 - [ ] concept_of_the_week is useful and clear
 - [ ] themes are 2-4 items with video_ids populated
-- [ ] videos_by_category includes ALL videos, each in exactly one category
+- [ ] video_categories includes ALL videos, each in exactly one category (3-5 categories)
 - [ ] weekly_note has personal voice and "-- LTAI" sign-off
 - [ ] Zero emojis anywhere"""
             }

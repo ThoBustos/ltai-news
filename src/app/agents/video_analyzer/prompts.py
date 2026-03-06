@@ -119,8 +119,8 @@ Break the video into logical sections (3-7 sections typically). For each:
 - Notable quotes: Best 1-2 quotes from this section
 
 ## 12. SOURCES REFERENCED
-Papers, books, podcasts, links, tools, communities mentioned.
-Type: paper/book/podcast/link/discord/community/event
+Papers, books, podcasts, links, tools, communities, organizations mentioned.
+Type: paper/book/podcast/link/discord/community/event/course/organization
 
 ## 13. PEOPLE MENTIONED
 For each person mentioned:
@@ -178,7 +178,7 @@ QUALITY STANDARDS:
         ]
 
         return opik.ChatPrompt(
-            name="video-master-extraction",
+            name=f"video-master-extraction-v{VideoAnalysisPrompts.CURRENT_VERSION}",
             messages=messages,
             metadata={
                 "category": "video-analysis",

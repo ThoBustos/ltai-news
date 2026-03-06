@@ -301,20 +301,20 @@ def _format_references_markdown_v2(refs: ReferencesIndex) -> List[str]:
             if ref.author:
                 line += f" by {ref.author}"
 
-            # V2.1: Add social links for people
+            # V2.1: Add social links for people (using attribute access)
             if ref.social_links:
                 social_parts = []
-                if ref.social_links.get('twitter'):
-                    handle = ref.social_links['twitter']
+                if ref.social_links.twitter:
+                    handle = ref.social_links.twitter
                     # Format as clickable link if it's a handle
                     if handle.startswith('@'):
                         social_parts.append(f"[Twitter](https://twitter.com/{handle})")
                     else:
                         social_parts.append(f"[Twitter]({handle})")
-                if ref.social_links.get('linkedin'):
-                    social_parts.append(f"[LinkedIn]({ref.social_links['linkedin']})")
-                if ref.social_links.get('website'):
-                    social_parts.append(f"[Web]({ref.social_links['website']})")
+                if ref.social_links.linkedin:
+                    social_parts.append(f"[LinkedIn]({ref.social_links.linkedin})")
+                if ref.social_links.website:
+                    social_parts.append(f"[Web]({ref.social_links.website})")
                 if social_parts:
                     line += f" ({', '.join(social_parts)})"
 
@@ -833,19 +833,19 @@ def _format_references_html_v2(refs: ReferencesIndex) -> str:
             if ref.author:
                 items_html += f" by {ref.author}"
 
-            # V2.1: Add social links
+            # V2.1: Add social links (using attribute access)
             if ref.social_links:
                 social_parts = []
-                if ref.social_links.get('twitter'):
-                    handle = ref.social_links['twitter']
+                if ref.social_links.twitter:
+                    handle = ref.social_links.twitter
                     if handle.startswith('@'):
                         social_parts.append(f'<a href="https://twitter.com/{handle}">Twitter</a>')
                     else:
                         social_parts.append(f'<a href="{handle}">Twitter</a>')
-                if ref.social_links.get('linkedin'):
-                    social_parts.append(f'<a href="{ref.social_links["linkedin"]}">LinkedIn</a>')
-                if ref.social_links.get('website'):
-                    social_parts.append(f'<a href="{ref.social_links["website"]}">Web</a>')
+                if ref.social_links.linkedin:
+                    social_parts.append(f'<a href="{ref.social_links.linkedin}">LinkedIn</a>')
+                if ref.social_links.website:
+                    social_parts.append(f'<a href="{ref.social_links.website}">Web</a>')
                 if social_parts:
                     items_html += f' ({", ".join(social_parts)})'
 

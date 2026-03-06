@@ -136,15 +136,19 @@ class WeeklyDigestRepository:
             logger.error(f"Failed to save empty weekly digest for {week_start}: {e}", exc_info=True)
             return None
 
-    async def get_weekly_digest_by_date(self, week_start: date) -> Optional[WeeklyDigestDB]:
+    async def get_weekly_digest_by_date(self, week_start: date | str) -> Optional[WeeklyDigestDB]:
         """Get weekly digest by week start date.
 
         Args:
-            week_start: Monday of the target week
+            week_start: Monday of the target week (date object or ISO string YYYY-MM-DD)
 
         Returns:
             WeeklyDigestDB if exists, None otherwise
         """
+        # Normalize to date object
+        if isinstance(week_start, str):
+            week_start = date.fromisoformat(week_start)
+
         try:
             result = (
                 self.client.table(self.table)
@@ -241,15 +245,19 @@ class WeeklyDigestRepository:
             logger.error(f"Failed to get recent weekly digests: {e}", exc_info=True)
             return []
 
-    async def has_weekly_digest(self, week_start: date) -> bool:
+    async def has_weekly_digest(self, week_start: date | str) -> bool:
         """Check if a weekly digest exists for the given week.
 
         Args:
-            week_start: Monday of the week to check
+            week_start: Monday of the week to check (date object or ISO string YYYY-MM-DD)
 
         Returns:
             True if digest exists, False otherwise
         """
+        # Normalize to date object
+        if isinstance(week_start, str):
+            week_start = date.fromisoformat(week_start)
+
         try:
             result = (
                 self.client.table(self.table)
