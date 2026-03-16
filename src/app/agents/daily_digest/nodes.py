@@ -16,7 +16,7 @@ from app.repositories.channel_repository import ChannelRepository
 from app.repositories.daily_digest_repository import DailyDigestRepository
 from app.agents.daily_digest.state import DailyDigestState
 from app.agents.daily_digest.prompts import DailyDigestPrompts
-from app.agents.daily_digest.formatters import format_digest_markdown, format_digest_html
+from app.agents.daily_digest.formatters import format_digest_markdown, format_digest_html, format_digest_html_v3
 
 
 def _calculate_read_time(content: DigestContentResponse) -> int:
@@ -165,28 +165,50 @@ async def load_data_node(state: DailyDigestState) -> DailyDigestState:
         raise
 
 
-async def generate_digest_node(state: DailyDigestState) -> DailyDigestState:
-    """Generate digest content using LLM.
+async def compress_videos_node(state: DailyDigestState) -> DailyDigestState:
+    """Compress full video analyses into compact summaries (~400 tokens each).
+
+    This node runs before write_digest_node and distills each video's full
+    analysis (3,000-5,000 tokens) into an essential summary (~400 tokens).
+    This reduces digest generation context by ~10x — no LLM call needed.
+
+    With 9 videos: ~36,000 tokens → ~3,600 tokens into write_digest_node.
+    """
+    video_analyses = state.get("video_analyses", [])
+
+    if not video_analyses:
+        state["video_summaries"] = []
+        return state
+
+    summaries = [DailyDigestPrompts.format_compact_video(video) for video in video_analyses]
+    state["video_summaries"] = summaries
+    logger.info(f"Compressed {len(summaries)} video analyses ({len(video_analyses)} → compact)")
+    return state
+
+
+async def write_digest_node(state: DailyDigestState) -> DailyDigestState:
+    """Generate digest content using LLM from compressed video summaries.
 
     This node:
-    1. Formats all video contexts into prompt
-    2. Calls Gemini Flash with structured output
+    1. Uses compact summaries from compress_videos_node (not raw analyses)
+    2. Calls Gemini with structured output
     3. Parses JSON response into DigestContentResponse
     4. Generates markdown and HTML versions
     """
     logger.info(f"Generating digest content for {state['target_date']}")
 
     try:
+        video_summaries = state.get("video_summaries", [])
         video_analyses = state.get("video_analyses", [])
         channel_stats = state.get("channel_stats", {})
 
-        if not video_analyses:
-            logger.warning("No video analyses available for digest generation")
+        if not video_summaries:
+            logger.warning("No video summaries available for digest generation")
             state.setdefault("errors", []).append("No video analyses available")
             return state
 
-        # Format video contexts - V2 returns tuple (context, channel_list)
-        videos_context, channel_list = DailyDigestPrompts.format_all_videos_context(video_analyses)
+        # Format compact video contexts — replaces format_all_videos_context
+        videos_context, channel_list = DailyDigestPrompts.format_compact_videos_context(video_summaries)
 
         # Choose schema version based on env var (default: v3)
         schema_version = settings.digest_schema_version
@@ -201,7 +223,7 @@ async def generate_digest_node(state: DailyDigestState) -> DailyDigestState:
         formatted_messages = chat_prompt.format(
             variables={
                 "date": state["target_date"],
-                "video_count": str(len(video_analyses)),
+                "video_count": str(len(video_summaries)),
                 "channel_list": channel_list,
                 "videos_context": videos_context,
             }
@@ -232,14 +254,14 @@ async def generate_digest_node(state: DailyDigestState) -> DailyDigestState:
             temperature=0.2,
             model_name=model_name,
             client=client,
-            max_output_tokens=12000,  # Large response model needs more tokens
+            max_output_tokens=65536,  # Model ceiling for gemini-3-flash-preview
         )
         processing_time = time.time() - start_time
 
         if isinstance(digest_content, DigestContentResponseV3):
-            # V3: no stats, no formatters
             formatted_markdown = ""
-            formatted_html = ""
+            target_date = parse_date(state["target_date"])
+            formatted_html = format_digest_html_v3(digest_content, target_date)
         else:
             # V2: Ensure stats are populated correctly
             if not digest_content.stats.channels and channel_stats:
@@ -317,7 +339,6 @@ async def generate_digest_node(state: DailyDigestState) -> DailyDigestState:
 
     except Exception as e:
         logger.error("Failed to generate digest: {}", e, exc_info=True)
-        state.setdefault("errors", []).append(f"generate_digest: {e!s}")
         raise
 
 

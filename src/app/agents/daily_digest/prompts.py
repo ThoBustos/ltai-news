@@ -373,6 +373,111 @@ Three flat lists:
             }
         )
 
+    @staticmethod
+    def format_compact_video(video_data: Dict[str, Any]) -> str:
+        """Format a single video analysis into a compact summary (~400 tokens).
+
+        Used by compress_videos_node to reduce context before digest generation.
+        Extracts essential fields only — ~10x smaller than format_video_context.
+
+        Args:
+            video_data: Full video analysis dict from load_data_node
+
+        Returns:
+            Compact formatted string for use as digest generation context
+        """
+        video_id = video_data.get("video_id", "")
+        title = video_data.get("title", "")
+        channel = video_data.get("channel_name", "")
+        duration = (video_data.get("duration_seconds", 0) or 0) // 60
+        url = f"https://youtube.com/watch?v={video_id}"
+        tldr = video_data.get("tldr", "")
+
+        # Top 5 key points from lessons_learned
+        lessons = video_data.get("lessons_learned", {}) or {}
+        key_points: List[str] = []
+        for items in lessons.values():
+            if isinstance(items, list):
+                key_points.extend(str(i) for i in items)
+        key_points = key_points[:5]
+
+        # Best direct quote
+        quotes = video_data.get("direct_quotes", []) or []
+        best_quote = ""
+        if quotes:
+            q = quotes[0]
+            if isinstance(q, dict):
+                best_quote = f'"{q.get("quote", "")}" — {q.get("speaker", "")}'
+
+        # Framework names
+        frameworks = video_data.get("frameworks_shared", []) or []
+        fw_names = [f.get("name", "") for f in frameworks if isinstance(f, dict) and f.get("name")]
+
+        # Key stats (top 3)
+        stats = video_data.get("statistics_data", []) or []
+        stat_strs = [
+            f"{s.get('value', '')}: {s.get('context', '')}"
+            for s in stats[:3] if isinstance(s, dict)
+        ]
+
+        # People with social URLs when available
+        people = video_data.get("people_mentioned", []) or []
+        people_strs = []
+        for p in people[:5]:
+            if not isinstance(p, dict):
+                continue
+            name = p.get("name", "")
+            social = p.get("social_links") or {}
+            url_part = social.get("twitter") or social.get("website") or ""
+            people_strs.append(f"{name} ({url_part})" if url_part else name)
+
+        lines = [f"--- VIDEO: {video_id} ---"]
+        lines.append(f"TITLE: {title}")
+        lines.append(f"CHANNEL: {channel} | DURATION: {duration}m | URL: {url}")
+        lines.append(f"TLDR: {tldr}")
+        if key_points:
+            lines.append("KEY POINTS:")
+            lines.extend(f"  - {p}" for p in key_points)
+        if best_quote:
+            lines.append(f"QUOTE: {best_quote}")
+        if fw_names:
+            lines.append(f"FRAMEWORKS: {', '.join(fw_names)}")
+        if stat_strs:
+            lines.append("STATS:")
+            lines.extend(f"  - {s}" for s in stat_strs)
+        if people_strs:
+            lines.append(f"PEOPLE: {', '.join(people_strs)}")
+        lines.append("--- END VIDEO ---")
+        return "\n".join(lines)
+
+    @staticmethod
+    def format_compact_videos_context(video_summaries: List[str]) -> Tuple[str, str]:
+        """Join compact video summaries and extract channel list.
+
+        Drop-in replacement for format_all_videos_context used by write_digest_node.
+        The channel list is derived from the summaries (CHANNEL: field).
+
+        NOTE: Tightly coupled to the text layout produced by format_compact_video().
+        Parses lines starting with "CHANNEL:" and splits on "|".
+        If format_compact_video() changes its output format, update this parser too.
+
+        Args:
+            video_summaries: List of compact strings from compress_videos_node
+
+        Returns:
+            Tuple of (combined context string, comma-separated channel list)
+        """
+        channels_seen: set = set()
+        for summary in video_summaries:
+            for line in summary.splitlines():
+                if line.startswith("CHANNEL:"):
+                    # "CHANNEL: ChannelName | DURATION: ..."
+                    channel_part = line.split("|")[0].replace("CHANNEL:", "").strip()
+                    if channel_part:
+                        channels_seen.add(channel_part)
+        channel_list = ", ".join(sorted(channels_seen))
+        return "\n\n".join(video_summaries), channel_list
+
     @staticmethod  # type: ignore[arg-type]
     def format_video_context(video_data: Dict[str, Any]) -> str:
         """Format a single video's data into context for the prompt - V2.2.

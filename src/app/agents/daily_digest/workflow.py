@@ -12,7 +12,8 @@ from app.models.daily_digest import DigestGenerationResult, DigestContentRespons
 from app.agents.daily_digest.state import DailyDigestState
 from app.agents.daily_digest.nodes import (
     load_data_node,
-    generate_digest_node,
+    compress_videos_node,
+    write_digest_node,
     save_results_node,
 )
 
@@ -52,10 +53,11 @@ async def create_checkpointer(database_url: str):
 def create_daily_digest_workflow():
     """Create daily digest workflow with Opik tracking.
 
-    The workflow has three nodes:
+    The workflow has four nodes:
     1. load_data_node: Load video analyses and metadata for target date
-    2. generate_digest_node: Generate digest content using LLM
-    3. save_results_node: Save digest and extract references
+    2. compress_videos_node: Compress each analysis to ~400 tokens (no LLM)
+    3. write_digest_node: Generate digest content using LLM (from compact summaries)
+    4. save_results_node: Save digest and extract references
 
     Returns:
         Compiled and tracked LangGraph workflow
@@ -65,19 +67,23 @@ def create_daily_digest_workflow():
 
     workflow = StateGraph(DailyDigestState)
 
-    # Add nodes — generate_digest retries on GeminiStructuredOutputError
+    # Add nodes
+    # compress_videos: programmatic compression, no LLM, no retry needed
+    # write_digest: LLM call on compact summaries, retries on GeminiStructuredOutputError
     workflow.add_node("load_data", load_data_node)
+    workflow.add_node("compress_videos", compress_videos_node)
     workflow.add_node(
-        "generate_digest",
-        generate_digest_node,
+        "write_digest",
+        write_digest_node,
         retry=RetryPolicy(max_attempts=3, retry_on=(GeminiStructuredOutputError,)),
     )
     workflow.add_node("save_results", save_results_node)
 
-    # Define sequential edges
+    # Sequential edges: load → compress → write → save
     workflow.add_edge(START, "load_data")
-    workflow.add_edge("load_data", "generate_digest")
-    workflow.add_edge("generate_digest", "save_results")
+    workflow.add_edge("load_data", "compress_videos")
+    workflow.add_edge("compress_videos", "write_digest")
+    workflow.add_edge("write_digest", "save_results")
     workflow.add_edge("save_results", END)
 
     # Compile workflow

@@ -297,6 +297,15 @@ async def generate_structured(
         usage = extract_token_usage(response)
         return result, usage
 
+    # Check finish_reason before parsing — anything other than STOP means truncated output
+    if response.candidates:
+        from google.genai.types import FinishReason
+        finish_reason = response.candidates[0].finish_reason
+        if finish_reason not in (None, FinishReason.STOP, FinishReason.FINISH_REASON_UNSPECIFIED):
+            raise GeminiStructuredOutputError(
+                f"Gemini stopped early ({finish_reason}) for {response_model.__name__} — response is truncated, retrying"
+            )
+
     # Native call succeeded — parse the response
     try:
         result = response_model.model_validate_json(response.text or "")

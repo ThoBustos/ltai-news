@@ -10,8 +10,9 @@ class DailyDigestState(TypedDict):
 
     This state flows through the LangGraph workflow nodes:
     1. load_data_node: Loads video analyses and metadata for target date
-    2. generate_digest_node: Generates digest content using LLM
-    3. save_results_node: Saves digest to database and extracts references
+    2. compress_videos_node: Compresses each analysis to ~400 tokens (no LLM)
+    3. write_digest_node: Generates digest content using LLM (from compact summaries)
+    4. save_results_node: Saves digest to database and extracts references
     """
 
     # Input (required)
@@ -22,7 +23,11 @@ class DailyDigestState(TypedDict):
     video_metadata: NotRequired[List[Dict[str, Any]]]  # Video + channel metadata
     channel_stats: NotRequired[Dict[str, Dict[str, Any]]]  # Channel aggregates
 
-    # LLM output (from generate_digest_node)
+    # Compact summaries produced by compress_videos_node (~400 tokens each)
+    # Used by write_digest_node instead of raw analyses to stay within token limits
+    video_summaries: NotRequired[List[str]]
+
+    # LLM output (from write_digest_node)
     digest_content: NotRequired[Union[DigestContentResponse, DigestContentResponseV3]]
 
     # Rendered output
