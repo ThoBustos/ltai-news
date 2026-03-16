@@ -24,6 +24,7 @@ from datetime import date
 
 from app.models.daily_digest import (
     DigestContentResponse,
+    DigestContentResponseV3,
     VideoSection,
     ActionItem,
     ContrarianCorner,
@@ -863,3 +864,367 @@ def _format_references_html_v2(refs: ReferencesIndex) -> str:
     html_parts.append(format_category("Communities", refs.communities))
 
     return "".join(html_parts)
+
+
+PREHEADER_PADDING = "\u2007\ufeff\u034f" * 40
+
+
+def _esc(s: str) -> str:
+    return (
+        s.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#39;")
+    )
+
+
+def format_digest_html_v3_simple(content: DigestContentResponseV3) -> str:
+    """Format V3 digest content as HTML — simple fallback layout."""
+
+    # Intro: each newline-separated line becomes its own <p>
+    intro_lines = [line.strip() for line in content.intro.strip().split("\n") if line.strip()]
+    intro_html = "".join(f"<p>{_esc(line)}</p>" for line in intro_lines)
+
+    # Video sections
+    video_parts = []
+    for video in content.video_sections:
+        bullets_html = "".join(f"<li>{_esc(b)}</li>" for b in video.bullets)
+        video_parts.append(
+            f'<div class="video-section">'
+            f'<a href="{video.video_url}" class="video-title">{_esc(video.title)}</a>'
+            f'<div class="video-meta">{_esc(video.channel_name)} &middot; {video.duration_minutes} min &middot; {_esc(video.speaker)}</div>'
+            f'<p class="framing">{_esc(video.framing)}</p>'
+            f"<ul>{bullets_html}</ul>"
+            f"</div>"
+        )
+    videos_html = "".join(video_parts)
+
+    # References
+    ref_sections = []
+    if content.references.people:
+        items = "".join(f"<li>{_esc(p)}</li>" for p in content.references.people)
+        ref_sections.append(f"<div class='ref-group'><h4>People</h4><ul>{items}</ul></div>")
+    if content.references.tools:
+        items = "".join(f"<li>{_esc(t)}</li>" for t in content.references.tools)
+        ref_sections.append(f"<div class='ref-group'><h4>Tools</h4><ul>{items}</ul></div>")
+    if content.references.papers:
+        items = "".join(f"<li>{_esc(p)}</li>" for p in content.references.papers)
+        ref_sections.append(f"<div class='ref-group'><h4>Papers</h4><ul>{items}</ul></div>")
+    refs_html = "".join(ref_sections)
+
+    # Keywords
+    keywords_html = " ".join(f'<span class="keyword">{_esc(kw)}</span>' for kw in content.keywords)
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{content.title}</title>
+    <style>
+        body {{
+            font-family: Georgia, 'Times New Roman', serif;
+            line-height: 1.7;
+            color: #1a1a1a;
+            max-width: 680px;
+            margin: 0 auto;
+            padding: 24px;
+            background-color: #fafafa;
+        }}
+        .container {{
+            background-color: #ffffff;
+            border-radius: 4px;
+            padding: 40px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+        }}
+        h1 {{
+            font-size: 24px;
+            margin: 0 0 6px 0;
+            color: #111;
+            font-weight: 600;
+            line-height: 1.3;
+        }}
+        .meta {{
+            font-size: 13px;
+            color: #888;
+            margin-bottom: 28px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }}
+        .intro p {{
+            margin: 0 0 6px 0;
+            font-size: 16px;
+            line-height: 1.6;
+        }}
+        .pull-quote {{
+            border-left: 3px solid #111;
+            padding: 12px 20px;
+            margin: 28px 0;
+            font-style: italic;
+            font-size: 17px;
+            color: #333;
+            background-color: #f9f9f9;
+        }}
+        h2 {{
+            font-size: 18px;
+            margin-top: 36px;
+            color: #222;
+            border-bottom: 1px solid #e0e0e0;
+            padding-bottom: 8px;
+            font-weight: 600;
+        }}
+        .video-section {{
+            margin: 24px 0;
+            padding: 20px;
+            border: 1px solid #e5e5e5;
+            border-radius: 4px;
+        }}
+        .video-title {{
+            font-size: 16px;
+            font-weight: 600;
+            color: #2563eb;
+            text-decoration: none;
+            display: block;
+            margin-bottom: 4px;
+        }}
+        .video-title:hover {{ text-decoration: underline; }}
+        .video-meta {{
+            font-size: 13px;
+            color: #888;
+            margin-bottom: 12px;
+            font-style: italic;
+        }}
+        .framing {{
+            font-size: 15px;
+            margin: 0 0 12px 0;
+        }}
+        ul {{
+            margin: 0;
+            padding-left: 20px;
+        }}
+        li {{
+            font-size: 14px;
+            margin-bottom: 6px;
+            color: #333;
+        }}
+        .ref-group {{ margin-bottom: 16px; }}
+        .ref-group h4 {{
+            font-size: 13px;
+            color: #666;
+            margin: 0 0 6px 0;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+        }}
+        .keywords {{
+            text-align: center;
+            margin-top: 28px;
+        }}
+        .keyword {{
+            display: inline-block;
+            background-color: #f0f0f0;
+            font-size: 12px;
+            padding: 3px 10px;
+            border-radius: 3px;
+            margin: 2px;
+            color: #555;
+        }}
+        .footer {{
+            text-align: center;
+            font-size: 12px;
+            color: #aaa;
+            margin-top: 28px;
+            padding-top: 16px;
+            border-top: 1px solid #eee;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>{content.title}</h1>
+        <div class="meta">{content.meta}</div>
+
+        <div class="intro">{intro_html}</div>
+
+        <div class="pull-quote">"{content.pull_quote}"</div>
+
+        <h2>Videos</h2>
+        {videos_html}
+
+        {f'<h2>References</h2><div class="references">{refs_html}</div>' if refs_html else ''}
+
+        <div class="keywords">{keywords_html}</div>
+
+        <div class="footer">Daily AI Digest &middot; Unsubscribe</div>
+    </div>
+</body>
+</html>"""
+
+
+def format_digest_html_v3(
+    content: DigestContentResponseV3,
+    publish_date: date,
+    issue_url: str = "",
+    unsubscribe_url: str = "#",
+) -> str:
+    """Format V3 digest as HTML email — ported from thomasbustosv2 digestBlastTemplate.ts."""
+
+    formatted_date = f"{publish_date.strftime('%A, %B')} {publish_date.day}, {publish_date.year}"
+    safe_title = _esc(content.title)
+    # Use intro as preheader so it doesn't repeat the subject line
+    intro_preview = " ".join(line.strip() for line in content.intro.strip().split("\n") if line.strip())
+    preview_text = _esc(intro_preview[:100] + "…" if len(intro_preview) > 100 else intro_preview)
+
+    # Keywords
+    keywords_line = (
+        f'<p style="margin:0 0 28px;font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;font-size:0.7rem;letter-spacing:0.1em;text-transform:uppercase;color:#666666;">'
+        + " &middot; ".join(_esc(k) for k in content.keywords)
+        + "</p>"
+        if content.keywords else ""
+    )
+
+    # Intro (staccato lines → single block joined with spaces for email)
+    intro_text = " ".join(
+        line.strip() for line in content.intro.strip().split("\n") if line.strip()
+    )
+    fn_sans = "font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;"
+    fn_serif = "font-family:Georgia,'Times New Roman',serif;"
+    intro_block = (
+        '<p style="margin:0 0 20px;' + fn_sans + 'font-size:0.93rem;color:#333333;line-height:1.7;">'
+        + _esc(intro_text) + "</p>"
+        if intro_text else ""
+    )
+
+    # Pull quote
+    pq_escaped = _esc(content.pull_quote) if content.pull_quote else ""
+    pull_quote_block = (
+        '<table cellpadding="0" cellspacing="0" style="margin:0 0 24px;border-left:2px solid #7C6AC4;">'
+        '<tr><td style="padding:0 0 0 16px;">'
+        '<p style="margin:0;' + fn_serif + 'font-size:0.93rem;color:#333333;line-height:1.7;">'
+        "&ldquo;" + pq_escaped + "&rdquo;</p></td></tr></table>"
+        if content.pull_quote else ""
+    )
+
+    # Video items
+    items_html = ""
+    for i, video in enumerate(content.video_sections[:5]):
+        num = str(i + 1).zfill(2)
+        meta = " \u00b7 ".join(filter(None, [
+            video.speaker,
+            video.channel_name,
+            f"{video.duration_minutes} min" if video.duration_minutes else None,
+        ]))
+        bullets_html = ""
+        if video.bullets:
+            rows = ""
+            for b in video.bullets[:3]:
+                rows += (
+                    "<tr>"
+                    '<td style="padding:0 8px 6px 0;vertical-align:top;">'
+                    '<span style="display:inline-block;width:3px;height:3px;background:#7C6AC4;border-radius:50%;margin-top:7px;"></span>'
+                    "</td>"
+                    '<td style="padding:0 0 6px;">'
+                    '<p style="margin:0;' + fn_sans + 'font-size:0.85rem;color:#333333;line-height:1.6;">'
+                    + _esc(b) + "</p></td></tr>"
+                )
+            bullets_html = '<table cellpadding="0" cellspacing="0" style="margin:10px 0 0;">' + rows + "</table>"
+
+        title_html = (
+            '<p style="margin:0 0 5px;' + fn_serif + 'font-size:1.1rem;font-weight:400;color:#111111;line-height:1.3;">'
+            + _esc(video.title) + "</p>"
+            if video.title else ""
+        )
+        meta_html = (
+            '<p style="margin:0 0 6px;' + fn_sans + 'font-size:0.7rem;color:#666666;">'
+            + _esc(meta) + "</p>"
+            if meta else ""
+        )
+        watch_html = (
+            '<a href="' + video.video_url + '" style="display:inline-block;margin:0 0 10px;' + fn_sans
+            + 'font-size:0.7rem;color:#F89151;text-decoration:none;">Watch on YouTube &rarr;</a>'
+            if video.video_url else ""
+        )
+        framing_html = (
+            '<p style="margin:0;' + fn_sans + 'font-size:0.88rem;color:#333333;line-height:1.65;">'
+            + _esc(video.framing) + "</p>"
+            if video.framing else ""
+        )
+
+        items_html += (
+            '<tr><td style="padding:0 0 28px;">'
+            '<p style="margin:0 0 6px;' + fn_sans + 'font-size:0.6rem;letter-spacing:0.2em;color:#666666;">' + num + "</p>"
+            + title_html + meta_html + watch_html + framing_html + bullets_html
+            + "</td></tr>"
+        )
+
+    divider = '<tr><td style="padding:0 0 28px;"><hr style="border:none;border-top:1px solid #ebebeb;margin:0;"></td></tr>'
+
+    has_content = intro_text or content.pull_quote or content.video_sections
+    content_section = (
+        f"""{divider}
+        {'<tr><td>' + intro_block + pull_quote_block + '</td></tr>' if intro_block or pull_quote_block else ''}
+        {items_html}
+        {divider}"""
+        if has_content else ""
+    )
+
+    cta = (
+        f'<tr><td style="padding:4px 0 36px;"><a href="{issue_url}" style="font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;font-size:0.88rem;color:#7C6AC4;text-decoration:none;letter-spacing:0.02em;">Read the full issue &rarr;</a></td></tr>'
+        if issue_url else ""
+    )
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+</head>
+<body style="margin:0;padding:0;background:#f5f5f4;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+
+  <div style="display:none;max-height:0;overflow:hidden;">{preview_text}{PREHEADER_PADDING}</div>
+
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f5f4;">
+    <tr><td align="center" style="padding:40px 16px;">
+
+      <table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:2px;">
+
+        <tr><td style="background:#111111;padding:28px 36px;border-radius:2px 2px 0 0;">
+          <p style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:1.3rem;font-weight:400;color:#ffffff;line-height:1.2;">AI News</p>
+          <p style="margin:5px 0 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:0.65rem;letter-spacing:0.14em;color:#888888;text-transform:uppercase;">by Thomas Bustos</p>
+        </td></tr>
+
+        <tr><td style="padding:32px 36px 4px;">
+          <table width="100%" cellpadding="0" cellspacing="0">
+
+            <tr><td style="padding:0 0 8px;">
+              <p style="margin:0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:0.72rem;color:#666666;letter-spacing:0.04em;">{formatted_date}</p>
+            </td></tr>
+
+            <tr><td style="padding:0 0 16px;">
+              <h1 style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:1.55rem;font-weight:400;color:#111111;line-height:1.3;">{safe_title}</h1>
+            </td></tr>
+
+            {f'<tr><td>{keywords_line}</td></tr>' if keywords_line else ''}
+
+            {content_section}
+
+            {cta}
+
+          </table>
+        </td></tr>
+
+        <tr><td style="padding:20px 36px 28px;border-top:1px solid #ebebeb;">
+          <p style="margin:0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:0.72rem;color:#666666;line-height:1.65;">
+            You're receiving this because you subscribed to AI News.<br>
+            <a href="{unsubscribe_url}" style="color:#666666;text-decoration:underline;">Unsubscribe</a>
+          </p>
+        </td></tr>
+
+      </table>
+
+    </td></tr>
+  </table>
+
+</body>
+</html>"""
