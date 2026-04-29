@@ -1098,10 +1098,9 @@ def format_digest_html_v3(
     # Pull quote
     pq_escaped = _esc(content.pull_quote) if content.pull_quote else ""
     pull_quote_block = (
-        '<table cellpadding="0" cellspacing="0" style="margin:0 0 24px;border-left:2px solid #7C6AC4;">'
-        '<tr><td style="padding:0 0 0 16px;">'
+        '<div style="margin:0 0 24px;padding:0 0 0 16px;border-left:2px solid #7C6AC4;">'
         '<p style="margin:0;' + fn_serif + 'font-size:0.93rem;color:#333333;line-height:1.7;">'
-        "&ldquo;" + pq_escaped + "&rdquo;</p></td></tr></table>"
+        "&ldquo;" + pq_escaped + "&rdquo;</p></div>"
         if content.pull_quote else ""
     )
 
@@ -1169,7 +1168,7 @@ def format_digest_html_v3(
     )
 
     cta = (
-        f'<tr><td style="padding:4px 0 36px;"><a href="{issue_url}" style="font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;font-size:0.88rem;color:#7C6AC4;text-decoration:none;letter-spacing:0.02em;">Read the full issue &rarr;</a></td></tr>'
+        f'<tr><td style="padding:4px 0 36px;"><a href="{issue_url}" style="display:inline-block;padding:12px 24px;background:#111111;color:#ffffff;text-decoration:none;font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;font-size:0.85rem;letter-spacing:0.04em;border-radius:2px;">Read the full issue →</a></td></tr>'
         if issue_url else ""
     )
 
@@ -1179,19 +1178,31 @@ def format_digest_html_v3(
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="light">
+  <style>
+    @media (prefers-color-scheme: dark) {{
+      .masthead {{ background-color: #111111 !important; }}
+      .masthead-title {{ color: #ffffff !important; }}
+      .masthead-byline {{ color: #888888 !important; }}
+    }}
+    @media only screen and (max-width: 600px) {{
+      .outer-td {{ padding: 0 !important; }}
+    }}
+  </style>
 </head>
-<body style="margin:0;padding:0;background:#f5f5f4;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+<body style="margin:0;padding:0;background:#ffffff;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
 
   <div style="display:none;max-height:0;overflow:hidden;">{preview_text}{PREHEADER_PADDING}</div>
 
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f5f4;">
-    <tr><td align="center" style="padding:40px 16px;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;">
+    <tr><td align="center" class="outer-td" style="padding:40px 16px;">
 
-      <table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:2px;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;">
 
-        <tr><td style="background:#111111;padding:28px 36px;border-radius:2px 2px 0 0;">
-          <p style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:1.3rem;font-weight:400;color:#ffffff;line-height:1.2;">AI News</p>
-          <p style="margin:5px 0 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:0.65rem;letter-spacing:0.14em;color:#888888;text-transform:uppercase;">by Thomas Bustos</p>
+        <tr><td class="masthead" style="background:#111111;padding:28px 36px;">
+          <a href="{issue_url}" style="text-decoration:none;">
+            <p class="masthead-title" style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:1.3rem;font-weight:400;color:#ffffff;line-height:1.2;">AI News</p>
+            <p class="masthead-byline" style="margin:5px 0 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:0.65rem;letter-spacing:0.14em;color:#888888;text-transform:uppercase;">by Thomas Bustos</p>
+          </a>
         </td></tr>
 
         <tr><td style="padding:32px 36px 4px;">
@@ -1202,7 +1213,9 @@ def format_digest_html_v3(
             </td></tr>
 
             <tr><td style="padding:0 0 16px;">
-              <h1 style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:1.55rem;font-weight:400;color:#111111;line-height:1.3;">{safe_title}</h1>
+              <a href="{issue_url}" style="text-decoration:none;">
+                <h1 style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:1.55rem;font-weight:400;color:#111111;line-height:1.3;">{safe_title}</h1>
+              </a>
             </td></tr>
 
             {f'<tr><td>{keywords_line}</td></tr>' if keywords_line else ''}
