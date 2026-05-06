@@ -155,6 +155,13 @@ class Settings(BaseSettings):
         alias="ANALYSIS_TIMEOUT_SECONDS"
     )
 
+    # Website Configuration
+    site_url: str = Field(
+        default="https://thomasbustos.com",
+        description="Public website base URL (used for digest issue links in emails)",
+        alias="SITE_URL",
+    )
+
     # Email Service Configuration (Resend)
     resend_api_key: Optional[str] = Field(
         default=None,

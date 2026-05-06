@@ -261,7 +261,8 @@ async def write_digest_node(state: DailyDigestState) -> DailyDigestState:
         if isinstance(digest_content, DigestContentResponseV3):
             formatted_markdown = ""
             target_date = parse_date(state["target_date"])
-            formatted_html = format_digest_html_v3(digest_content, target_date)
+            issue_url = f"{settings.site_url}/ltai-news/{target_date.isoformat()}"
+            formatted_html = format_digest_html_v3(digest_content, target_date, issue_url=issue_url)
         else:
             # V2: Ensure stats are populated correctly
             if not digest_content.stats.channels and channel_stats:
