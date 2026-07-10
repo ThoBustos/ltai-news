@@ -375,6 +375,13 @@ class DigestContentResponseV3(BaseModel):
     confidence_score: float = Field(ge=0.0, le=1.0)
 
 
+class DigestSynthesisResponse(BaseModel):
+    """LLM response schema for synthesizing title/intro/pull_quote from multiple chunk digests."""
+    title: str = Field(description="Punchy one-line title capturing the most important theme across all videos. No em dashes.")
+    intro: str = Field(description="Staccato short sentences, each on its own line. Synthesize key signals from all batches. No em dashes.")
+    pull_quote: Optional[str] = Field(default=None, description="The single best verbatim quote from all batches. Null if none stands out.")
+
+
 # === State Models for LangGraph Workflow ===
 
 class DigestMetrics(BaseModel):
