@@ -9,7 +9,7 @@ from app.core.logging import logger
 from app.config.settings import settings
 from app.core.utils.time_window import get_window, parse_date
 from app.core.utils.llm_client import get_genai_client, extract_token_usage, generate_structured
-from app.models.daily_digest import DigestContentResponse, DigestContentResponseV3, DigestMetrics, DigestSynthesisResponse, ReferencesV3
+from app.models.daily_digest import DigestContentResponse, DigestContentResponseV3, DigestMetrics, DigestSynthesisResponse, DigestChunkResponse, ReferencesV3
 from app.repositories.video_repository import VideoRepository
 from app.repositories.video_analysis_repository import VideoAnalysisRepository
 from app.repositories.channel_repository import ChannelRepository
@@ -186,7 +186,7 @@ async def compress_videos_node(state: DailyDigestState) -> DailyDigestState:
     return state
 
 
-_CHUNK_SIZE = 10
+_CHUNK_SIZE = 5
 
 
 async def _generate_chunk_digest(
@@ -197,71 +197,56 @@ async def _generate_chunk_digest(
     chunk_idx: int,
     total_chunks: int,
 ) -> tuple:
-    """Generate a DigestContentResponseV3 for a single chunk of video summaries."""
-    videos_context, channel_list = DailyDigestPrompts.format_compact_videos_context(chunk_summaries)
-    chat_prompt = DailyDigestPrompts.get_digest_generation_prompt_v3()
+    """Generate video sections + references for a single chunk."""
+    videos_context, _ = DailyDigestPrompts.format_compact_videos_context(chunk_summaries)
 
-    formatted_messages = chat_prompt.format(
-        variables={
-            "date": target_date,
-            "video_count": str(len(chunk_summaries)),
-            "channel_list": channel_list,
-            "videos_context": videos_context,
-        }
+    system_instruction = (
+        "You are extracting per-video digest sections from AI/tech video analyses. "
+        "Rules: No em dashes. No emojis. Framing is 1-2 sentences. Bullets are 4-6 specific points."
+    )
+    user_content = (
+        f"[BATCH {chunk_idx + 1} of {total_chunks}] DATE: {target_date}\n\n"
+        f"For each of the {len(chunk_summaries)} videos below, generate video_sections (video_id, title, "
+        f"speaker, channel_name, duration_minutes, video_url, framing, bullets), plus references "
+        f"(people/tools/papers mentioned), keywords (5-8), and confidence_score.\n\n"
+        f"===== VIDEOS =====\n{videos_context}\n===== END ====="
     )
 
-    system_content = ""
-    user_content = ""
-    for msg in formatted_messages:
-        if msg is None:
-            continue
-        content = str(msg.get("content", ""))
-        if msg.get("role") == "system":
-            system_content = content
-        else:
-            user_content = content
-
-    user_content = f"[BATCH {chunk_idx + 1} of {total_chunks}]\n\n" + user_content
-
-    digest_chunk, usage = await generate_structured(
+    chunk_result, usage = await generate_structured(
         contents=user_content,
-        response_model=DigestContentResponseV3,
-        system_instruction=system_content,
+        response_model=DigestChunkResponse,
+        system_instruction=system_instruction,
         temperature=0.2,
         model_name=model_name,
         client=client,
-        max_output_tokens=65536,
+        max_output_tokens=16384,
     )
-    logger.info(f"Chunk {chunk_idx + 1}/{total_chunks}: {len(digest_chunk.video_sections)} sections generated")
-    return digest_chunk, usage
+    logger.info(f"Chunk {chunk_idx + 1}/{total_chunks}: {len(chunk_result.video_sections)} sections generated")
+    return chunk_result, usage
 
 
 async def _synthesize_digest_header(
-    chunk_digests: list,
+    chunk_results: list,
     target_date: str,
     client,
     model_name: str,
 ) -> tuple:
-    """Synthesize title, intro, pull_quote from multiple chunk digests via a small LLM call."""
+    """Synthesize title, intro, pull_quote from chunk summaries — small call, small output."""
     batch_lines = []
-    for i, chunk in enumerate(chunk_digests):
-        batch_lines.append(
-            f"[Batch {i + 1}]\n"
-            f"Title: {chunk.title}\n"
-            f"Intro: {chunk.intro}\n"
-            f"Pull quote: {chunk.pull_quote or 'none'}"
-        )
-    batches_text = "\n\n".join(batch_lines)
+    for i, chunk in enumerate(chunk_results):
+        sections_summary = "; ".join(s.title for s in chunk.video_sections[:3])
+        batch_lines.append(f"[Batch {i + 1}] Videos: {sections_summary}")
+    batches_text = "\n".join(batch_lines)
 
     system_instruction = (
-        "You are synthesizing multiple partial AI newsletter digest batches into unified header fields. "
-        "Rules: No em dashes. No emojis. Staccato intro sentences, each on its own line."
+        "You are writing the editorial header for a daily AI newsletter. "
+        "No em dashes. No emojis. Staccato intro sentences, each on its own line."
     )
     user_content = (
-        f"DATE: {target_date}\n"
-        f"BATCH COUNT: {len(chunk_digests)}\n\n"
+        f"DATE: {target_date}\nTOTAL BATCHES: {len(chunk_results)}\n\n"
         f"{batches_text}\n\n"
-        "Synthesize ONE title, ONE intro, and ONE pull_quote that best represents ALL videos combined today."
+        "Write a title (one punchy line), intro (staccato sentences on own lines), "
+        "and pull_quote (best quote from today, or null)."
     )
 
     result, usage = await generate_structured(
@@ -271,39 +256,39 @@ async def _synthesize_digest_header(
         temperature=0.2,
         model_name=model_name,
         client=client,
-        max_output_tokens=2048,
+        max_output_tokens=4096,
     )
-    return result.title, result.intro, result.pull_quote, usage
+    return result, usage
 
 
 async def _merge_chunk_digests(
-    chunk_digests: list,
+    chunk_results: list,
+    all_summaries: list,
     target_date: str,
     client,
     model_name: str,
 ) -> tuple:
-    """Merge multiple chunk DigestContentResponseV3 objects into one unified digest."""
-    all_video_sections = [section for chunk in chunk_digests for section in chunk.video_sections]
+    """Merge chunk results with a synthesized header into one DigestContentResponseV3."""
+    all_video_sections = [section for chunk in chunk_results for section in chunk.video_sections]
 
-    all_people = list(dict.fromkeys(p for chunk in chunk_digests for p in chunk.references.people))
-    all_tools = list(dict.fromkeys(t for chunk in chunk_digests for t in chunk.references.tools))
-    all_papers = list(dict.fromkeys(p for chunk in chunk_digests for p in chunk.references.papers))
-    all_keywords = list(dict.fromkeys(kw for chunk in chunk_digests for kw in chunk.keywords))[:10]
+    all_people = list(dict.fromkeys(p for chunk in chunk_results for p in chunk.references.people))
+    all_tools = list(dict.fromkeys(t for chunk in chunk_results for t in chunk.references.tools))
+    all_papers = list(dict.fromkeys(p for chunk in chunk_results for p in chunk.references.papers))
+    all_keywords = list(dict.fromkeys(kw for chunk in chunk_results for kw in chunk.keywords))[:10]
+    avg_confidence = sum(c.confidence_score for c in chunk_results) / len(chunk_results)
 
-    avg_confidence = sum(c.confidence_score for c in chunk_digests) / len(chunk_digests)
-
-    title, intro, pull_quote, synthesis_usage = await _synthesize_digest_header(
-        chunk_digests, target_date, client, model_name
+    synthesis, synthesis_usage = await _synthesize_digest_header(
+        chunk_results, target_date, client, model_name
     )
 
     parsed = datetime.strptime(target_date, "%Y-%m-%d")
     meta = f"{parsed.strftime('%B')} {parsed.day} · {len(all_video_sections)} videos"
 
     merged = DigestContentResponseV3(
-        title=title,
+        title=synthesis.title,
         meta=meta,
-        intro=intro,
-        pull_quote=pull_quote,
+        intro=synthesis.intro,
+        pull_quote=synthesis.pull_quote,
         video_sections=all_video_sections,
         references=ReferencesV3(people=all_people, tools=all_tools, papers=all_papers),
         keywords=all_keywords,
@@ -396,7 +381,7 @@ async def write_digest_node(state: DailyDigestState) -> DailyDigestState:
                 total_cost += chunk_usage.cost_usd
 
             digest_content, synthesis_usage = await _merge_chunk_digests(
-                chunk_digests, state["target_date"], client, model_name
+                chunk_digests, video_summaries, state["target_date"], client, model_name
             )
             total_input_tokens += synthesis_usage.input_tokens
             total_output_tokens += synthesis_usage.output_tokens
