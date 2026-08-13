@@ -9,7 +9,7 @@ from app.core.logging import logger
 from app.config.settings import settings
 from app.core.utils.time_window import get_window, parse_date
 from app.core.utils.llm_client import get_genai_client, extract_token_usage, generate_structured
-from app.models.daily_digest import DigestContentResponse, DigestContentResponseV3, DigestMetrics
+from app.models.daily_digest import DigestContentResponse, DigestContentResponseV3, DigestMetrics, DigestSynthesisResponse, DigestChunkResponse, ReferencesV3
 from app.repositories.video_repository import VideoRepository
 from app.repositories.video_analysis_repository import VideoAnalysisRepository
 from app.repositories.channel_repository import ChannelRepository
@@ -186,6 +186,117 @@ async def compress_videos_node(state: DailyDigestState) -> DailyDigestState:
     return state
 
 
+_CHUNK_SIZE = 5
+
+
+async def _generate_chunk_digest(
+    chunk_summaries: list,
+    target_date: str,
+    client,
+    model_name: str,
+    chunk_idx: int,
+    total_chunks: int,
+) -> tuple:
+    """Generate video sections + references for a single chunk."""
+    videos_context, _ = DailyDigestPrompts.format_compact_videos_context(chunk_summaries)
+
+    system_instruction = (
+        "You are extracting per-video digest sections from AI/tech video analyses. "
+        "Rules: No em dashes. No emojis. Framing is 1-2 sentences. Bullets are 4-6 specific points."
+    )
+    user_content = (
+        f"[BATCH {chunk_idx + 1} of {total_chunks}] DATE: {target_date}\n\n"
+        f"For each of the {len(chunk_summaries)} videos below, generate video_sections (video_id, title, "
+        f"speaker, channel_name, duration_minutes, video_url, framing, bullets), plus references "
+        f"(people/tools/papers mentioned), keywords (5-8), and confidence_score.\n\n"
+        f"===== VIDEOS =====\n{videos_context}\n===== END ====="
+    )
+
+    chunk_result, usage = await generate_structured(
+        contents=user_content,
+        response_model=DigestChunkResponse,
+        system_instruction=system_instruction,
+        temperature=0.2,
+        model_name=model_name,
+        client=client,
+        max_output_tokens=16384,
+    )
+    logger.info(f"Chunk {chunk_idx + 1}/{total_chunks}: {len(chunk_result.video_sections)} sections generated")
+    return chunk_result, usage
+
+
+async def _synthesize_digest_header(
+    chunk_results: list,
+    target_date: str,
+    client,
+    model_name: str,
+) -> tuple:
+    """Synthesize title, intro, pull_quote from chunk summaries — small call, small output."""
+    batch_lines = []
+    for i, chunk in enumerate(chunk_results):
+        sections_summary = "; ".join(s.title for s in chunk.video_sections[:3])
+        batch_lines.append(f"[Batch {i + 1}] Videos: {sections_summary}")
+    batches_text = "\n".join(batch_lines)
+
+    system_instruction = (
+        "You are writing the editorial header for a daily AI newsletter. "
+        "No em dashes. No emojis. Staccato intro sentences, each on its own line."
+    )
+    user_content = (
+        f"DATE: {target_date}\nTOTAL BATCHES: {len(chunk_results)}\n\n"
+        f"{batches_text}\n\n"
+        "Write a title (one punchy line), intro (staccato sentences on own lines), "
+        "and pull_quote (best quote from today, or null)."
+    )
+
+    result, usage = await generate_structured(
+        contents=user_content,
+        response_model=DigestSynthesisResponse,
+        system_instruction=system_instruction,
+        temperature=0.2,
+        model_name=model_name,
+        client=client,
+        max_output_tokens=4096,
+    )
+    return result, usage
+
+
+async def _merge_chunk_digests(
+    chunk_results: list,
+    all_summaries: list,
+    target_date: str,
+    client,
+    model_name: str,
+) -> tuple:
+    """Merge chunk results with a synthesized header into one DigestContentResponseV3."""
+    all_video_sections = [section for chunk in chunk_results for section in chunk.video_sections]
+
+    all_people = list(dict.fromkeys(p for chunk in chunk_results for p in chunk.references.people))
+    all_tools = list(dict.fromkeys(t for chunk in chunk_results for t in chunk.references.tools))
+    all_papers = list(dict.fromkeys(p for chunk in chunk_results for p in chunk.references.papers))
+    all_keywords = list(dict.fromkeys(kw for chunk in chunk_results for kw in chunk.keywords))[:10]
+    avg_confidence = sum(c.confidence_score for c in chunk_results) / len(chunk_results)
+
+    synthesis, synthesis_usage = await _synthesize_digest_header(
+        chunk_results, target_date, client, model_name
+    )
+
+    parsed = datetime.strptime(target_date, "%Y-%m-%d")
+    meta = f"{parsed.strftime('%B')} {parsed.day} · {len(all_video_sections)} videos"
+
+    merged = DigestContentResponseV3(
+        title=synthesis.title,
+        meta=meta,
+        intro=synthesis.intro,
+        pull_quote=synthesis.pull_quote,
+        video_sections=all_video_sections,
+        references=ReferencesV3(people=all_people, tools=all_tools, papers=all_papers),
+        keywords=all_keywords,
+        confidence_score=avg_confidence,
+    )
+    return merged, synthesis_usage
+
+
 async def write_digest_node(state: DailyDigestState) -> DailyDigestState:
     """Generate digest content using LLM from compressed video summaries.
 
@@ -245,17 +356,60 @@ async def write_digest_node(state: DailyDigestState) -> DailyDigestState:
         client = get_genai_client()
         model_name = settings.analysis_model_name
 
-        # Use hybrid approach - tries structured, falls back to parsing
         start_time = time.time()
-        digest_content, usage = await generate_structured(
-            contents=user_content,
-            response_model=response_schema,
-            system_instruction=system_content,
-            temperature=0.2,
-            model_name=model_name,
-            client=client,
-            max_output_tokens=65536,  # Model ceiling for gemini-3-flash-preview
-        )
+
+        chunked_threshold = settings.digest_chunked_threshold
+        if schema_version == "v3" and len(video_summaries) > chunked_threshold:
+            logger.info(
+                f"{len(video_summaries)} videos exceeds threshold {chunked_threshold} — using chunked digest generation"
+            )
+            chunks = [
+                video_summaries[i:i + _CHUNK_SIZE]
+                for i in range(0, len(video_summaries), _CHUNK_SIZE)
+            ]
+            chunk_digests = []
+            total_input_tokens = 0
+            total_output_tokens = 0
+            total_cost = 0.0
+            for idx, chunk in enumerate(chunks):
+                chunk_digest, chunk_usage = await _generate_chunk_digest(
+                    chunk, state["target_date"], client, model_name, idx, len(chunks)
+                )
+                chunk_digests.append(chunk_digest)
+                total_input_tokens += chunk_usage.input_tokens
+                total_output_tokens += chunk_usage.output_tokens
+                total_cost += chunk_usage.cost_usd
+
+            digest_content, synthesis_usage = await _merge_chunk_digests(
+                chunk_digests, video_summaries, state["target_date"], client, model_name
+            )
+            total_input_tokens += synthesis_usage.input_tokens
+            total_output_tokens += synthesis_usage.output_tokens
+            total_cost += synthesis_usage.cost_usd
+
+            from app.core.utils.llm_client import TokenUsage
+            usage = TokenUsage(
+                input_tokens=total_input_tokens,
+                output_tokens=total_output_tokens,
+                total_tokens=total_input_tokens + total_output_tokens,
+                cost_usd=total_cost,
+            )
+            logger.info(
+                f"Chunked digest complete: {len(chunks)} chunks + synthesis, "
+                f"{total_input_tokens + total_output_tokens} tokens, ${total_cost:.6f}"
+            )
+        else:
+            # Use hybrid approach - tries structured, falls back to parsing
+            digest_content, usage = await generate_structured(
+                contents=user_content,
+                response_model=response_schema,
+                system_instruction=system_content,
+                temperature=0.2,
+                model_name=model_name,
+                client=client,
+                max_output_tokens=65536,  # Model ceiling for gemini-3-flash-preview
+            )
+
         processing_time = time.time() - start_time
 
         if isinstance(digest_content, DigestContentResponseV3):

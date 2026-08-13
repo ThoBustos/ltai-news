@@ -209,6 +209,12 @@ class Settings(BaseSettings):
         alias="DIGEST_SCHEMA_VERSION"
     )
 
+    digest_chunked_threshold: int = Field(
+        default=12,
+        description="Video count above which digest generation switches to chunked mode (chunks of 10)",
+        alias="DIGEST_CHUNKED_THRESHOLD"
+    )
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

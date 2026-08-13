@@ -375,6 +375,21 @@ class DigestContentResponseV3(BaseModel):
     confidence_score: float = Field(ge=0.0, le=1.0)
 
 
+class DigestChunkResponse(BaseModel):
+    """Schema for a single chunk in chunked digest generation — sections plus references."""
+    video_sections: List[VideoSectionV3]
+    references: ReferencesV3
+    keywords: List[str] = Field(default_factory=list, description="5-8 keywords for this batch.")
+    confidence_score: float = Field(default=0.8, ge=0.0, le=1.0)
+
+
+class DigestSynthesisResponse(BaseModel):
+    """Minimal synthesis schema — editorial header only, no per-video content."""
+    title: str = Field(description="Punchy one-line title capturing the most important theme across all videos. No em dashes.")
+    intro: str = Field(description="Staccato short sentences, each on its own line. No em dashes.")
+    pull_quote: Optional[str] = Field(default=None, description="The single best verbatim quote from today. Null if none stands out.")
+
+
 # === State Models for LangGraph Workflow ===
 
 class DigestMetrics(BaseModel):
