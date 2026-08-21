@@ -38,10 +38,11 @@ class ExtractionResult(BaseModel):
 
 class ProcessingResult(BaseModel):
     """Result of video processing phase."""
-    
+
     videos_processed: int
     transcripts_extracted: int
     analyses_completed: int
+    already_analyzed: int = 0
     errors: List[str]
     started_at: datetime
     completed_at: datetime

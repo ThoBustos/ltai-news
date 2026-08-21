@@ -234,15 +234,26 @@ class ContentOrchestrator:
         try:
             # Get videos that need processing (status = COLLECTED, transcript_fetched = True)
             processing_queue = self.get_processing_queue(target_date)
-            
-            # Filter to only videos with transcripts
-            videos_with_transcripts = [
-                v for v in processing_queue 
-                if self.video_repo.has_transcript(v.id) and not await self.video_analysis_service.has_analysis(v.id)
-            ]
-            
-            logger.info(f"Found {len(videos_with_transcripts)} videos with transcripts needing analysis")
-            
+
+            # Split into: needs analysis, already analyzed, missing transcript.
+            # Distinguishing "already analyzed" from "nothing to do" matters because a
+            # redundant run-daily call (e.g. two invocations for the same date) finds
+            # every video already analyzed and would otherwise report the same
+            # "0 processed" as a genuine failure or empty day.
+            videos_with_transcripts = []
+            already_analyzed = 0
+            for v in processing_queue:
+                if await self.video_analysis_service.has_analysis(v.id):
+                    already_analyzed += 1
+                elif self.video_repo.has_transcript(v.id):
+                    videos_with_transcripts.append(v)
+
+            logger.info(
+                f"Found {len(videos_with_transcripts)} videos with transcripts needing analysis "
+                f"({already_analyzed} already analyzed, "
+                f"{len(processing_queue) - already_analyzed - len(videos_with_transcripts)} missing transcript)"
+            )
+
             videos_processed = 0
             transcripts_extracted = transcript_result.transcripts_extracted if transcript_result else 0
             analyses_completed = 0
@@ -269,13 +280,14 @@ class ContentOrchestrator:
                     errors.append(error_msg)
             
             completed_at = datetime.now(timezone.utc)
-            
+
             logger.info(f"Video processing completed: {analyses_completed}/{len(videos_with_transcripts)} analyses successful")
-            
+
             return ProcessingResult(
                 videos_processed=videos_processed,
                 transcripts_extracted=transcripts_extracted,
                 analyses_completed=analyses_completed,
+                already_analyzed=already_analyzed,
                 errors=errors,
                 started_at=started_at,
                 completed_at=completed_at,
