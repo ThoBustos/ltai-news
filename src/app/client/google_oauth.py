@@ -5,7 +5,9 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta, timezone
 
+import httplib2
 from google.oauth2.credentials import Credentials
+from google_auth_httplib2 import AuthorizedHttp
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
@@ -45,10 +47,20 @@ class GoogleOAuthClient:
         self.youtube_service = None
 
     def authenticate(self) -> None:
-        """Authenticate and build YouTube service."""
+        """Authenticate and build YouTube service.
+
+        httplib2 (used internally by googleapiclient) does not read
+        HTTP_PROXY/HTTPS_PROXY env vars on its own, unlike requests/curl -
+        it needs an explicit proxy_info. Without this, YouTube API calls
+        bypass any configured egress proxy entirely and fail outright in
+        network environments that require one.
+        """
         creds: Any = self._get_credentials()
         self.credentials = creds
-        self.youtube_service = build("youtube", "v3", credentials=creds)
+        proxy_info = httplib2.proxy_info_from_environment(method="https")
+        http = httplib2.Http(proxy_info=proxy_info) if proxy_info else httplib2.Http()
+        authorized_http = AuthorizedHttp(creds, http=http)
+        self.youtube_service = build("youtube", "v3", http=authorized_http, cache_discovery=False)
         logger.info("Authenticated with YouTube API")
 
     def _get_credentials(self) -> Any:
