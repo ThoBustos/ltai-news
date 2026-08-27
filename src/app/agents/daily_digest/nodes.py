@@ -219,7 +219,9 @@ async def _generate_chunk_digest(
         temperature=0.2,
         model_name=model_name,
         client=client,
-        max_output_tokens=16384,
+        max_output_tokens=65536,  # Model ceiling for gemini-3-flash-preview -- was 16384,
+        # too low for a verbose 5-video chunk and caused deterministic
+        # MAX_TOKENS truncation + identical-retry failures (2026-08-27 incident).
     )
     logger.info(f"Chunk {chunk_idx + 1}/{total_chunks}: {len(chunk_result.video_sections)} sections generated")
     return chunk_result, usage
